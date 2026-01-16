@@ -22,16 +22,18 @@ echo.
 echo Choose an option:
 echo   [1] Install   - Add Right-Click menu
 echo   [2] Remove    - Remove Right-Click menu
-echo   [3] Backup    - Export current registry keys before changes
-echo   [4] Exit
+echo   [3] Restart   - Restart Windows Explorer (to apply changes)
+echo   [4] Backup    - Export current registry keys before changes
+echo   [5] Exit
 echo.
 
-set /p "choice=Enter choice (1-4): "
+set /p "choice=Enter choice (1-5): "
 
 if "%choice%"=="1" goto install
 if "%choice%"=="2" goto remove
-if "%choice%"=="3" goto backup
-if "%choice%"=="4" goto end
+if "%choice%"=="3" goto restart
+if "%choice%"=="4" goto backup
+if "%choice%"=="5" goto end
 echo [ERROR] Invalid choice.
 pause
 exit /b
@@ -68,6 +70,16 @@ echo [SUCCESS] Context menu installed!
 echo.
 echo You can now right-click any folder and select:
 echo   "Open with Antigravity (Debug)"
+echo.
+pause
+exit /b
+
+:restart
+echo.
+echo [RESTART] Restarting Windows Explorer...
+taskkill /f /im explorer.exe >nul 2>nul
+start explorer.exe
+echo [SUCCESS] Explorer restarted.
 echo.
 pause
 exit /b

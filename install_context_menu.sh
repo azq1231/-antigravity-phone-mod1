@@ -25,11 +25,12 @@ echo ""
 echo "Choose an option:"
 echo "  [1] Install - Add Right-Click menu"
 echo "  [2] Remove  - Remove Right-Click menu"
-echo "  [3] Backup  - Copy existing script before changes"
-echo "  [4] Exit"
+echo "  [3] Restart - Restart Nautilus (to apply changes)"
+echo "  [4] Backup  - Copy existing script before changes"
+echo "  [5] Exit"
 echo ""
 
-read -p "Enter choice (1-4): " choice
+read -p "Enter choice (1-5): " choice
 
 NAUTILUS_PATH="$HOME/.local/share/nautilus/scripts"
 SCRIPT_FILE="$NAUTILUS_PATH/Open with Antigravity (Debug)"
@@ -72,6 +73,12 @@ case $choice in
         ;;
     3)
         echo ""
+        echo "[RESTART] Restarting Nautilus..."
+        nautilus -q
+        echo "[SUCCESS] Nautilus signaled to quit. It will restart on next open."
+        ;;
+    4)
+        echo ""
         echo "[BACKUP] Backing up existing script..."
         
         if [ -f "$SCRIPT_FILE" ]; then
@@ -85,7 +92,7 @@ case $choice in
             echo "[INFO] No existing Antigravity context menu script found to backup."
         fi
         ;;
-    4)
+    5)
         echo "[EXIT] No changes made."
         exit 0
         ;;

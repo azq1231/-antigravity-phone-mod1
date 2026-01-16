@@ -42,7 +42,7 @@
     - Verify Node.js is installed.
     - Automatically install dependencies.
     - Detect and display your **exact IP Address**.
-    - *(Linux only)* Provides a tip to use `./install_context_menu.sh` for Nautilus/GNOME context menu management.
+    - *(Linux only)* Provides a tip to use `./install_context_menu.sh` (Install/Remove/Restart/Backup) for Nautilus/GNOME context menu management.
     - *(macOS)* Provide a command to create a fast shell alias (`ag-debug`).
 
 2.  **Connect Your Phone**
@@ -83,7 +83,7 @@ Since macOS requires Automator for context menu entries, follow these steps manu
 - **Thought Expansion**: Tap on "Thinking..." or "Thought" blocks on your phone to remotely expand them in the desktop IDE.
 - **Smart Sync**: Bi-directional synchronization ensures your phone always shows the current Model and Mode selected on your desktop. Press Refresh to force a full sync.
 - **Premium Mobile UI**: A sleek, dark-themed interface optimized for touch interaction and long-form reading.
-- **Context Menu Management**: Dedicated scripts to **Install, Remove, or Backup** your Right-Click integrations on Windows and Linux.
+- **Context Menu Management**: Dedicated scripts to **Install, Remove, Restart, or Backup** your Right-Click integrations on Windows and Linux.
 - **Zero-Config**: The launch scripts handle the heavy lifting of environment setup.
 
 ---
