@@ -4,6 +4,32 @@ All notable changes to **Antigravity Phone Connect** are documented here, in rev
 
 ---
 
+## v0.2.0 - Global Remote Access (Web Mode) 🌍
+**Release Date:** January 21, 2026
+
+---
+
+### ✨ NEW: World-Wide Remote Access
+- **Global Tunneling**: Integrated `ngrok` support via `tunnel.py` to expose the server securely to the internet.
+- **Mobile Data Support**: Access your Antigravity chat from anywhere without needing to be on the same Wi-Fi.
+- **One-Click Web Launchers**: New `start_ag_phone_connect_web.bat` and `.sh` scripts that automate server startup, tunnel creation, and passcode management.
+
+### 🔒 Security & Authentication
+- **Password Protection**: Introduced a passcode system for all remote sessions.
+- **Passcode Auto-Generation**: Automatically generates a temporary 6-digit passcode if no password is set in `.env`.
+- **Conditional Auth**: Intelligently bypasses authentication for devices on the same local Wi-Fi for a seamless home experience.
+- **Secure Sessions**: Implemented signed `httpOnly` cookies for robust session management.
+
+### 🛡️ Improved Process Management
+- **Aggressive Cleanup**: Launchers now forcefully kill any hidden "ghost" processes from previous messy exits, ensuring a clean start every time.
+- **Smarter Exit Handlers**: `Ctrl+C` now triggers a graceful shutdown and automatically closes the terminal window after a 3-second countdown.
+
+### 🚀 Optimization
+- **Data Compression**: Gzip compression added to all snapshots, reducing mobile data usage and speeding up loading on thin signals.
+- **Express Speed**: Snapshots are now served with explicit UTF-8 encoding and optimized headers to prevent character corruption on mobile proxies.
+
+---
+
 ## v0.1.7 - Robustness & Stability Update 🛡️
 **Release Date:** January 21, 2026
 

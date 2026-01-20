@@ -3,25 +3,27 @@
 ## Project Structure
 ```text
 antigravity_phone_chat/
-├── server.js               # Main Node.js server (Express + WebSocket + CDP + HTTPS)
-├── generate_ssl.js         # SSL certificate generator (pure Node.js, no OpenSSL needed)
-├── ui_inspector.js         # Utility for inspecting VS Code/Antigravity UI via CDP
+├── server.js                       # Main Node.js server (Express + WebSocket + CDP + HTTPS)
+├── generate_ssl.js                 # SSL certificate generator (pure Node.js, no OpenSSL needed)
+├── ui_inspector.js                 # Utility for inspecting VS Code/Antigravity UI via CDP
 ├── public/
-│   ├── index.html          # Mobile-optimized web frontend
+│   ├── index.html                  # Mobile-optimized web frontend
 │   ├── css/
-│   │   └── style.css       # Main stylesheet (App aesthetics & layout)
+│   │   └── style.css               # Main stylesheet (App aesthetics & layout)
 │   └── js/
-│       └── app.js          # Client-side logic (WebSocket, API calls, UI interactions)
-├── certs/                   # SSL certificates directory (auto-generated, gitignored)
-│   ├── server.key          # Private key
-│   └── server.cert         # Self-signed certificate
-├── start_ag_phone_connect.bat  # Windows launcher (auto-detects HTTPS)
-├── start_ag_phone_connect.sh   # Mac/Linux launcher (auto-detects HTTPS)
-├── install_context_menu.bat    # Windows context menu manager
-├── install_context_menu.sh     # Linux context menu manager
-├── package.json            # Dependencies and metadata
-├── LICENSE                 # GPL v3 License
-└── README.md               # Quick-start guide
+│       └── app.js                  # Client-side logic (WebSocket, API calls, UI interactions)
+├── certs/                          # SSL certificates directory (auto-generated, gitignored)
+│   ├── server.key                  # Private key
+│   └── server.cert                 # Self-signed certificate
+├── start_ag_phone_connect.bat      # Standard Windows launcher (LAN)
+├── start_ag_phone_connect_web.bat  # Web Windows launcher (Starts server + Global Tunnel)
+├── start_ag_phone_connect.sh       # Standard Mac/Linux launcher (LAN)
+├── start_ag_phone_connect_web.sh   # Web Mac/Linux launcher (Starts server + Global Tunnel)
+├── tunnel.py                       # Python script managing the ngrok tunnel & passcodes
+├── .env                            # Local configuration (Passwords & API Tokens)
+├── package.json                    # Dependencies and metadata
+├── LICENSE                         # GPL v3 License
+└── README.md                       # Quick-start guide
 ```
 
 ## High-Level Architecture
@@ -32,12 +34,14 @@ The system acts as a "Headless Mirror" of the Antigravity session running on a D
 graph TD
     AG[Antigravity / VS Code] -- CDP Snapshots --> S[Node.js Server]
     S -- WebSocket Status --> P[Phone Frontend]
-    P -- HTTPS GET /snapshot --> S
-    P -- HTTPS GET /health --> S
-    P -- HTTPS POST /send --> S
-    S -- CDP Message Injection --> AG
-    P -- HTTPS POST /remote-click --> S
-    S -- CDP Click Event --> AG
+    P -- GET /snapshot --> S
+    P -- POST /login --> S
+    S -- Cookie Auth --> P
+    T[ngrok Tunnel] -- Proxy --> S
+    P[Phone Frontend] -- Mobile Data --> T
+    S -- CDP Commands --> AG
+    PY[tunnel.py Manager] -- Spawns/Kills --> S
+    PY -- Monitors --> T
 ```
 
 ## Core Modules & Methods (server.js)
@@ -62,7 +66,9 @@ graph TD
 
 | Endpoint | Method | Description |
 | :--- | :--- | :--- |
-| `/health` | GET | Returns server status, CDP connection state, uptime, and timestamp. |
+| `/login` | POST | Authenticates user and sets session cookie. |
+| `/logout` | POST | Clears session cookie. |
+| `/health` | GET | Returns server status, CDP connection state, and uptime. |
 | `/snapshot` | GET | Returns latest captured HTML/CSS snapshot. |
 | `/app-state` | GET | Returns current Mode (Fast/Planning) and Model. |
 | `/ssl-status` | GET | Returns HTTPS status and certificate info. |
@@ -75,8 +81,30 @@ graph TD
 | `/generate-ssl` | POST | Generates SSL certificates (for HTTPS setup via UI). |
 | `/debug-ui` | GET | Returns serialized UI tree for debugging. |
 
-## HTTPS/SSL Support
+## Security & Authentication
 
+### 1. Global Web Access (Tunneling)
+When using the `_web` launcher, the system utilizes `ngrok` to create a secure tunnel. 
+- **Process Management**: `tunnel.py` acts as a supervisor, spawning the Node.js server as a child process. This ensures that when the tunnel is closed (Ctrl+C), the server is also reliably terminated.
+- **Auto-Protocol Detection**: `tunnel.py` detects if the local server is running HTTPS and configures the tunnel accordingly.
+- **Passcode Generation**: If no `APP_PASSWORD` is set in `.env`, a temporary 6-digit numeric passcode is generated for the session.
+- **Setup Assistant**: The launchers include a smart check for `.env` files; if missing, they provide an interactive prompt to generate a template configuration.
+
+### 2. Password Protection
+- **Session Management**: Uses signed, `httpOnly` cookies for maximum browser security.
+- **Conditional Auth**: Requests from local network IPs (LAN) are automatically exempted from password checks for convenience.
+- **WebSocket Auth**: Secure WebSockets verify credentials during the handshake.
+
+### Setup (First Time)
+1. **Get an ngrok Token**: Sign up for free at [ngrok.com](https://ngrok.com) and get your "Authtoken".
+2. **Automatic Configuration**: Simply run the `_web` script (below). It will detect your missing configuration and offer to create a template `.env` file for you!
+3. **Manual Backup**: Alternatively, create a `.env` file manually:
+   ```env
+   NGROK_AUTHTOKEN=your_token_here
+   APP_PASSWORD=your_secure_passcode
+   ```
+
+### 3. HTTPS/SSL Support
 The server automatically detects SSL certificates and enables HTTPS:
 
 1. **Certificate Generation**: Run `node generate_ssl.js`

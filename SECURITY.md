@@ -102,19 +102,47 @@ All browsers will show **"Not Secure"** but **"Encrypted"** - this is expected!
 
 ---
 
+## 🔑 Passcode Protection (NEW)
+
+To secure your session when accessing it globally, Antigravity Phone Connect now includes a built-in authentication layer.
+
+### How it Works
+1. **Local Access (Wi-Fi)**: The server detects your local IP. Devices on same Wi-Fi are **automatically authenticated**.
+2. **Global Access (Mobile Data)**: Requests from the internet (via ngrok) require a **Passcode**.
+3. **Session Cookies**: Once logged in, your browser stores a secure, signed cookie valid for 30 days.
+
+### Configuration
+Set your custom password in the `.env` file:
+```env
+APP_PASSWORD=your_secure_password
+```
+*If no password is set, the server will generate a **temporary 6-digit passcode** each time it starts and display it in the terminal.*
+
+---
+
 ## 🛡️ Security Model
 
 ### What's Protected
 
 - **Transport Layer**: All HTTP traffic is encrypted with TLS 1.3 when using HTTPS.
+- **Passcode Protection**: When accessed via the internet (ngrok) or non-local networks, a password/passcode is mandatory to prevent unauthorized access.
+- **Local Exemption**: Intelligent IP detection automatically trusts your local Wi-Fi devices, allowing password-free access at home.
+- **Secure Sessions**: Uses signed, `httpOnly` cookies that are inaccessible to cross-site scripting (XSS) attacks.
 - **Input Sanitization**: User messages are escaped using `JSON.stringify` before CDP injection.
 - **Graceful Shutdown**: Server cleans up connections properly on exit.
 
 ### What's NOT Protected
 
-- **No Authentication**: Anyone on your local network can access the server.
-- **No Authorization**: All connected clients have full control.
-- **Self-Signed Certs**: Not trusted by browsers without manual accept.
+- **Self-Signed Certs**: Not trusted by browsers without manual accept (see "Bypassing Warnings" above).
+- **Physical Access**: Anyone with physical access to your phone or desktop can control the session.
+
+### Remote Access Strategy
+
+| Method | Safety | Recommendation |
+|----------|--------|----------------|
+| **Local Wi-Fi** | 🟢 High | Default mode, no password required. |
+| **_web Mode (ngrok)** | 🟡 Medium | Use `APP_PASSWORD` in `.env` for secure global access. |
+| **Port Forwarding** | 🔴 Low | **NOT RECOMMENDED**. Use the built-in `_web` tunnel instead. |
 
 ### Recommendations
 

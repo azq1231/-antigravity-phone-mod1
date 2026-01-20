@@ -54,11 +54,38 @@ The script will:
 - **Wait for Antigravity** if it's not started yet
 - Display your **exact IP Address** (e.g., `https://192.168.1.5:3000`)
 
-### Step 4: Connect Your Phone
+### Step 4: Connect Your Phone (Local Wi-Fi)
 
 1. Ensure your phone is on the **same Wi-Fi network** as your PC
 2. Open your mobile browser and enter the **URL shown in the terminal**
 3. If using HTTPS: Accept the self-signed certificate warning on first visit
+
+---
+
+## 🌍 NEW: Global Remote Access (Web Mode)
+
+Access your Antigravity session from **anywhere in the world** (Mobile Data, outside Wi-Fi) with secure passcode protection.
+
+### Setup (First Time)
+1. **Get an ngrok Token**: Sign up for free at [ngrok.com](https://ngrok.com) and get your "Authtoken".
+2. **Automatic Configuration (Recommended)**: Simply run the `_web` script (below). It will detect your missing configuration and offer to create a template `.env` file for you automatically!
+3. **Manual Backup**: Alternatively, create a `.env` file manually in the project root:
+   ```env
+   NGROK_AUTHTOKEN=your_token_here
+   APP_PASSWORD=your_secure_passcode
+   PORT=3000
+   ```
+
+### Usage
+- **Windows**: Run `start_ag_phone_connect_web.bat`
+- **Mac/Linux**: Run `./start_ag_phone_connect_web.sh`
+
+The script will launch the server and provide a **Public URL** (e.g., `https://abcd-123.ngrok-free.app`). 
+1. Open this URL on your phone (no Wi-Fi needed!).
+2. Enter your `APP_PASSWORD` to log in.
+3. Enjoy full control from your mobile network!
+
+> 💡 **Tip:** Devices on the same local Wi-Fi still enjoy direct access without needing a password.
 
 ---
 
@@ -112,6 +139,8 @@ Since macOS requires Automator for context menu entries, follow these steps manu
 
 ## ✨ Features
 
+- **🌍 Global Web Access (NEW!)**: Secure remote access via ngrok tunnel. Access your AI from mobile data with passcode protection.
+- **🛡️ Auto-Cleanup (NEW!)**: Launchers now automatically sweep away "ghost" processes from previous sessions for a clean start every time.
 - **🔒 HTTPS Support**: Secure connections with self-signed SSL certificates.
 - **Real-Time Mirroring**: 1-second polling interval for near-instant sync.
 - **Remote Control**: Send messages, stop generations, and switch Modes (Fast/Planning) or Models (Gemini/Claude/GPT) directly from your phone.
