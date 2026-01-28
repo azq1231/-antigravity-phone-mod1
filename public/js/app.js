@@ -78,13 +78,8 @@ async function fetchAppState() {
 const sslBanner = document.getElementById('sslBanner');
 
 async function checkSslStatus() {
-    // Only show banner if currently on HTTP
-    if (window.location.protocol === 'https:') return;
-
-    // Check if user dismissed the banner before
-    if (localStorage.getItem('sslBannerDismissed')) return;
-
-    sslBanner.style.display = 'flex';
+    // Disabled SSL warning as per user request
+    if (sslBanner) sslBanner.style.display = 'none';
 }
 
 async function enableHttps() {
@@ -367,10 +362,10 @@ async function loadSnapshot() {
             '    background-color: transparent !important;\n' +
             '}';
         styleTag.textContent = darkModeOverrides;
+        // --- RENDER HTML ---
         chatContent.innerHTML = data.html;
 
-
-        // Add mobile copy buttons to all code blocks
+        // --- POST-RENDER PROCESS ---
         addMobileCopyButtons();
 
         // Smart scroll behavior: respect user scroll, only auto-scroll when appropriate

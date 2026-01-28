@@ -33,6 +33,7 @@ build/
 
 # SSL Certificates (generated locally)
 certs/
+certs_disabled/
 
 # Registry
 registry/
