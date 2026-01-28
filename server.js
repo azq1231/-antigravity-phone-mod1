@@ -109,27 +109,45 @@ function getJson(url) {
     });
 }
 
-// Find Antigravity CDP endpoint
-async function discoverCDP() {
-    const errors = [];
+// Find ALL active Antigravity CDP endpoints
+async function findAllInstances() {
+    const instances = [];
     for (const port of PORTS) {
         try {
             const list = await getJson(`http://127.0.0.1:${port}/json/list`);
-            // Look for workbench specifically (where #cascade exists, which has the chat) 
-            const found = list.find(t => t.url?.includes('workbench.html') || (t.title && t.title.includes('workbench')));
-            if (found && found.webSocketDebuggerUrl) {
-                return { port, url: found.webSocketDebuggerUrl };
+            // Relaxed Discovery Logic:
+            // 1. Prefer 'workbench.html' (The main window)
+            // 2. Accept type 'page' (Other windows)
+            // 3. Accept anything with a WebSocket URL (Debug)
+
+            // Filter out obviously wrong targets like shared workers or extensions if possible, 
+            // but for now, we want to be permissive to see SOMETHING.
+            let candidate = list.find(t => t.url?.includes('workbench.html'));
+
+            // Fallback: Find any page-like target if workbench isn't explicitly named yet
+            if (!candidate) {
+                candidate = list.find(t => t.type === 'page' && t.webSocketDebuggerUrl);
+            }
+
+            if (candidate && candidate.webSocketDebuggerUrl) {
+                instances.push({
+                    port,
+                    url: candidate.webSocketDebuggerUrl,
+                    title: candidate.title || `Antigravity (${port})`
+                });
             }
         } catch (e) {
-            errors.push(`${port}: ${e.message}`);
+            // Port not active or not responding, skip
         }
     }
-    const errorSummary = errors.length ? `Errors: ${errors.join(', ')}` : 'No ports responding';
-    throw new Error(`CDP not found on ports ${PORTS.join(',')}. ${errorSummary}. Is Antigravity started with --remote-debugging-port=9000?`);
+    return instances;
 }
 
 // Connect to CDP
 async function connectCDP(url) {
+    // Determine port from URL for logging/tracking if needed, though mostly handled by caller
+    // url format: ws://127.0.0.1:9000/...
+
     const ws = new WebSocket(url);
     await new Promise((resolve, reject) => {
         ws.on('open', resolve);
@@ -169,6 +187,17 @@ async function connectCDP(url) {
         } catch (e) { }
     });
 
+    // SAFETY FIX: Prevent unhandled 'error' events from crashing the process
+    ws.on('error', (err) => {
+        console.error('CDP WebSocket error:', err.message);
+        // Clean up pending calls so they don't hang
+        for (const [id, { reject, timeoutId }] of pendingCalls.entries()) {
+            clearTimeout(timeoutId);
+            reject(new Error('WebSocket Error: ' + err.message));
+        }
+        pendingCalls.clear();
+    });
+
     const call = (method, params) => new Promise((resolve, reject) => {
         const id = idCounter++;
 
@@ -181,13 +210,23 @@ async function connectCDP(url) {
         }, CDP_CALL_TIMEOUT);
 
         pendingCalls.set(id, { resolve, reject, timeoutId });
-        ws.send(JSON.stringify({ id, method, params }));
+
+        try {
+            if (ws.readyState !== WebSocket.OPEN) {
+                throw new Error('WebSocket is not open');
+            }
+            ws.send(JSON.stringify({ id, method, params }));
+        } catch (e) {
+            clearTimeout(timeoutId);
+            pendingCalls.delete(id);
+            reject(e);
+        }
     });
 
     await call("Runtime.enable", {});
     await new Promise(r => setTimeout(r, 1000));
 
-    return { ws, call, contexts };
+    return { ws, call, contexts, url };
 }
 
 // Capture chat snapshot
@@ -771,82 +810,181 @@ function isLocalRequest(req) {
 }
 
 // Initialize CDP connection
-async function initCDP() {
-    console.log('🔍 Discovering Antigravity CDP endpoint...');
-    const cdpInfo = await discoverCDP();
-    console.log(`✅ Found Antigravity on port ${cdpInfo.port}`);
+let activePort = null;
+let isSwitching = false; // Lock to prevent poll loop from interfering during switch
 
-    console.log('🔌 Connecting to CDP...');
-    cdpConnection = await connectCDP(cdpInfo.url);
-    console.log(`✅ Connected! Found ${cdpConnection.contexts.length} execution contexts\n`);
+async function initCDP(targetPort = null) {
+    // Strategy: If targetPort is specified, we MUST connect to it or fail.
+    // If no targetPort, we look for any available instance (fallback behavior for startup).
+
+    console.log(`🔍 [Init] Target: ${targetPort || 'Auto-Discover'}`);
+
+    let instances = [];
+
+    // Retry finding instances (give it a moment if just launched)
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        instances = await findAllInstances();
+        // If we have a specific target, check if it's in the list
+        if (targetPort) {
+            const found = instances.find(i => i.port === targetPort);
+            if (found) break; // Found our target!
+        } else if (instances.length > 0) {
+            break; // Found at least one instance for auto-discover
+        }
+
+        if (attempt < 3) {
+            // console.log(`   Attempt ${attempt} empty/missing target. Retrying in 500ms...`);
+            await new Promise(r => setTimeout(r, 500));
+        }
+    }
+
+    // Log what we found for debugging
+    // console.log('   Available Ports:', instances.map(i => i.port).join(', '));
+
+    let target = null;
+
+    if (targetPort) {
+        target = instances.find(i => i.port === targetPort);
+        if (!target) {
+            // CRITICAL CHANGE: Do NOT fallback if user specifically requested a port.
+            // Throwing error here prevents the "silent revert" to 9000.
+            const msg = `Target port ${targetPort} not found or has no active chat window.`;
+            console.error(`❌ ${msg}`);
+            throw new Error(msg);
+        }
+    } else {
+        // Startup / Auto-recovery mode: Default to first available
+        if (instances.length > 0) target = instances[0];
+    }
+
+    if (!target) {
+        throw new Error(`No Antigravity instances found. Is it running with --remote-debugging-port?`);
+    }
+
+    console.log(`✅ Connecting to Antigravity on port ${target.port}...`);
+
+    // Set switching lock
+    isSwitching = true;
+
+    try {
+        // Close existing connection only if we are actually switching or it's dead
+        if (cdpConnection && cdpConnection.ws) {
+            // Remove listeners to prevent "close" event from triggering anything elsewhere if needed
+            // But main cleanup is fine.
+            try { cdpConnection.ws.close(); } catch (e) { }
+        }
+
+        // Connect
+        cdpConnection = await connectCDP(target.url);
+
+        // Update active port ONLY after success
+        activePort = target.port;
+
+        // Force refresh caches
+        lastSnapshot = null;
+        lastSnapshotHash = null;
+
+        console.log(`✅ Connected! Found ${cdpConnection.contexts.length} execution contexts\n`);
+        return true;
+    } catch (e) {
+        console.error(`❌ Connection failed: ${e.message}`);
+        // Only reset activePort if we were trying to switch and failed entirely
+        // If we were recovering, keep trying
+        throw e;
+    } finally {
+        // Release lock
+        isSwitching = false;
+    }
 }
 
 // Background polling
 async function startPolling(wss) {
     let lastErrorLog = 0;
-    let isConnecting = false;
 
+    // We keep polling the currently connected instance
     const poll = async () => {
-        if (!cdpConnection || (cdpConnection.ws && cdpConnection.ws.readyState !== WebSocket.OPEN)) {
-            if (!isConnecting) {
-                console.log('🔍 Looking for Antigravity CDP connection...');
-                isConnecting = true;
-            }
-            if (cdpConnection) {
-                // Was connected, now lost
-                console.log('🔄 CDP connection lost. Attempting to reconnect...');
-                cdpConnection = null;
-            }
-            try {
-                await initCDP();
-                if (cdpConnection) {
-                    console.log('✅ CDP Connection established from polling loop');
-                    isConnecting = false;
-                }
-            } catch (err) {
-                // Not found yet, just wait for next cycle
-            }
-            setTimeout(poll, 2000); // Try again in 2 seconds if not found
+        // If we are in the middle of switching, DON'T interfere!
+        if (isSwitching) {
+            // console.log('⏳ Polling paused (switching)...');
+            setTimeout(poll, 1000);
             return;
         }
 
+        // Auto-reconnect logic
+        if (!cdpConnection || (cdpConnection.ws && cdpConnection.ws.readyState !== WebSocket.OPEN)) {
+            console.log('🔄 CDP connection lost. Scanning for instances...');
+            try {
+                // IMPORTANT: Always try to reconnect to the `activePort` we intended to be on.
+                // If activePort is null, it means we have no target yet (startup).
+                await initCDP(activePort);
+            } catch (err) {
+                // console.log('   Retrying in 2s...');
+            }
+            setTimeout(poll, 2000);
+            return;
+        }
+
+        // Double check: Are we actually connected to the RIGHTS port?
+        // If user switched activePort but CDP is still old, forcing a reconnect might be needed,
+        // but initCDP already handles connection replacement. 
+        // We just ensure we don't accidentally drift.
+
         try {
             const snapshot = await captureSnapshot(cdpConnection);
+
+            // LOGIC FIX: Even if snapshot has error, we might need to send it 
+            // if we are stuck on a stale screen from a previous instance.
+            // We verify by checking if the hash changed (even for error states).
+
+            let payload = null;
+
             if (snapshot && !snapshot.error) {
-                const hash = hashString(snapshot.html);
-
-                // Only update if content changed
-                if (hash !== lastSnapshotHash) {
-                    lastSnapshot = snapshot;
-                    lastSnapshotHash = hash;
-
-                    // Broadcast to all connected clients
-                    wss.clients.forEach(client => {
-                        if (client.readyState === WebSocket.OPEN) {
-                            client.send(JSON.stringify({
-                                type: 'snapshot_update',
-                                timestamp: new Date().toISOString()
-                            }));
-                        }
-                    });
-
-                    console.log(`📸 Snapshot updated (hash: ${hash})`);
-                }
+                payload = snapshot;
             } else {
-                // Snapshot is null or has error
+                // Construct a visual error state for the phone
+                // instead of suppressing it.
+                payload = {
+                    html: `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:#64748b;text-align:center;padding:20px;">
+                            <div style="font-size:24px;margin-bottom:10px;">⚠️</div>
+                            <div style="font-weight:500;margin-bottom:5px;">Waiting for Antigravity...</div>
+                            <div style="font-size:12px;opacity:0.8;">${snapshot?.error || 'No active chat found (Port ' + activePort + ')'}</div>
+                            <div style="font-size:12px;margin-top:20px;opacity:0.6;">Please open a chat window on your computer.</div>
+                           </div>`,
+                    css: '',
+                    error: snapshot?.error,
+                    timestamp: new Date().toISOString()
+                };
+            }
+
+            const hash = hashString(payload.html + (payload.error || ''));
+
+            // Only update if content changed
+            if (hash !== lastSnapshotHash) {
+                lastSnapshot = payload; // Save even if it's an error frame
+                lastSnapshotHash = hash;
+
+                // Broadcast to all connected clients
+                wss.clients.forEach(client => {
+                    if (client.readyState === WebSocket.OPEN) {
+                        client.send(JSON.stringify({
+                            type: 'snapshot_update',
+                            timestamp: new Date().toISOString()
+                        }));
+                    }
+                });
+
+                console.log(`📸 Snapshot updated (hash: ${hash}) ${payload.error ? '[Error State]' : ''}`);
+            }
+
+            // Still log warning for server admin
+            if (snapshot?.error) {
                 const now = Date.now();
                 if (!lastErrorLog || now - lastErrorLog > 10000) {
-                    const errorMsg = snapshot?.error || 'No valid snapshot captured (check contexts)';
-                    console.warn(`⚠️  Snapshot capture issue: ${errorMsg}`);
-                    if (errorMsg === 'cascade not found') {
-                        console.log('   (Tip: Ensure an active chat is open in Antigravity)');
-                    }
-                    if (cdpConnection.contexts.length === 0) {
-                        console.log('   (Tip: No active execution contexts found. Try interacting with the Antigravity window)');
-                    }
+                    console.warn(`⚠️  Snapshot issue: ${snapshot.error}`);
                     lastErrorLog = now;
                 }
             }
+
         } catch (err) {
             console.error('Poll error:', err.message);
         }
@@ -1142,9 +1280,35 @@ async function main() {
 
         // Get App State
         app.get('/app-state', async (req, res) => {
-            if (!cdpConnection) return res.json({ mode: 'Unknown', model: 'Unknown' });
+            if (!cdpConnection) return res.json({ mode: 'Unknown', model: 'Unknown', activePort });
             const result = await getAppState(cdpConnection);
+            result.activePort = activePort;
             res.json(result);
+        });
+
+        // List active instances
+        app.get('/instances', async (req, res) => {
+            const list = await findAllInstances();
+            res.json({
+                instances: list,
+                activePort: activePort
+            });
+        });
+
+        // Switch Instance
+        app.post('/switch-instance', async (req, res) => {
+            const { port } = req.body;
+            if (!port) return res.status(400).json({ error: 'Port required' });
+
+            try {
+                // Broadcast "Switching..." state to clients for immediate feedback
+                // (Optional but good UX)
+                console.log(`Attempting to switch CDP instance to port ${port}...`);
+                await initCDP(parseInt(port));
+                res.json({ success: true, activePort });
+            } catch (e) {
+                res.status(500).json({ error: e.message });
+            }
         });
 
         // Kill any existing process on the port before starting

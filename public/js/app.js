@@ -65,6 +65,11 @@ async function fetchAppState() {
             modelText.textContent = data.model;
         }
 
+        // Active Port Sync
+        if (data.activePort) {
+            instanceText.textContent = `Port ${data.activePort}`;
+        }
+
         console.log('[SYNC] State refreshed from Desktop:', data);
     } catch (e) { console.error('[SYNC] Failed to sync state', e); }
 }
@@ -745,6 +750,43 @@ modeBtn.addEventListener('click', () => {
             modeText.textContent = currentMode;
         }
     });
+});
+
+// --- Instance Switching ---
+const instanceBtn = document.getElementById('instanceBtn');
+const instanceText = document.getElementById('instanceText');
+
+instanceBtn.addEventListener('click', async () => {
+    try {
+        const res = await fetchWithAuth('/instances');
+        const data = await res.json();
+
+        const options = data.instances.map(i => `Port ${i.port}`);
+
+        openModal('Select Instance', options, async (selection) => {
+            const port = selection.replace('Port ', '');
+            instanceText.textContent = 'Switching...';
+            try {
+                const switchRes = await fetchWithAuth('/switch-instance', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ port })
+                });
+                const switchData = await switchRes.json();
+                if (switchData.success) {
+                    instanceText.textContent = `Port ${port}`;
+                    // Trigger refresh to update UI immediately
+                    loadSnapshot();
+                } else {
+                    alert('Failed to switch: ' + switchData.error);
+                }
+            } catch (e) {
+                alert('Switch error: ' + e.message);
+            }
+        });
+    } catch (e) {
+        console.error('Failed to list instances', e);
+    }
 });
 
 modelBtn.addEventListener('click', () => {
