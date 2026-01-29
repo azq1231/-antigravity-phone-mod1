@@ -149,17 +149,29 @@ function connectWebSocket() {
         if (data.type === 'snapshot_update' && autoRefreshEnabled && !userIsScrolling) {
             if (data.port) {
                 currentViewingPort = data.port;
-                instanceText.textContent = `Port ${data.port}`;
+                const name = cleanInstanceName(data);
+                instanceText.textContent = name;
             }
             renderSnapshot(data);
         }
 
         if (data.type === 'switched') {
             currentViewingPort = data.port;
-            instanceText.textContent = `Port ${data.port}`;
+            const name = cleanInstanceName(data);
+            instanceText.textContent = name;
             fetchAppState(); // Sync mode/model for the new port
         }
     };
+
+    function cleanInstanceName(data) {
+        if (!data.title) return `Port ${data.port}`;
+        // Remove "Antigravity - " prefix if it exists to make it cleaner on mobile
+        let name = data.title.replace(/^Antigravity\s*-\s*/i, '');
+        // Limit length
+        if (name.length > 15) name = name.substring(0, 12) + '...';
+        return name;
+    }
+
 
     ws.onclose = () => {
         console.log('WS Disconnected');
@@ -570,7 +582,7 @@ async function sendMessage() {
     sendBtn.style.opacity = '0.5';
 
     try {
-        const res = await fetchWithAuth('/send', {
+        const res = await fetchWithAuth(`/send?port=${currentViewingPort}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ message })
@@ -625,7 +637,7 @@ let snapshotReloadPending = false;
 async function syncScrollToDesktop() {
     const scrollPercent = chatContainer.scrollTop / (chatContainer.scrollHeight - chatContainer.clientHeight);
     try {
-        await fetchWithAuth('/remote-scroll', {
+        await fetchWithAuth(`/remote-scroll?port=${currentViewingPort}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ scrollPercent })
@@ -692,7 +704,7 @@ function quickAction(text) {
 stopBtn.addEventListener('click', async () => {
     stopBtn.style.opacity = '0.5';
     try {
-        const res = await fetchWithAuth('/stop', { method: 'POST' });
+        const res = await fetchWithAuth(`/stop?port=${currentViewingPort}`, { method: 'POST' });
         const data = await res.json();
         if (data.success) {
             // alert('Stopped');
@@ -735,7 +747,7 @@ modeBtn.addEventListener('click', () => {
     openModal('Select Mode', ['Fast', 'Planning'], async (mode) => {
         modeText.textContent = 'Setting...';
         try {
-            const res = await fetchWithAuth('/set-mode', {
+            const res = await fetchWithAuth(`/set-mode?port=${currentViewingPort}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ mode })
@@ -764,10 +776,13 @@ instanceBtn.addEventListener('click', async () => {
         const res = await fetchWithAuth('/instances');
         const data = await res.json();
 
-        const options = data.instances.map(i => `Port ${i.port}`);
+        const options = data.instances.map(i => {
+            const cleanName = i.title.replace(/^Antigravity\s*-\s*/i, '');
+            return `${i.port}: ${cleanName}`;
+        });
 
         openModal('Select Instance', options, async (selection) => {
-            const port = selection.replace('Port ', '');
+            const port = selection.split(':')[0].trim();
             instanceText.textContent = 'Switching...';
 
             // Re-route switch through WebSocket for this specific session
@@ -788,7 +803,7 @@ modelBtn.addEventListener('click', () => {
         const prev = modelText.textContent;
         modelText.textContent = 'Setting...';
         try {
-            const res = await fetchWithAuth('/set-model', {
+            const res = await fetchWithAuth(`/set-model?port=${currentViewingPort}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ model })
@@ -854,7 +869,7 @@ chatContainer.addEventListener('click', async (e) => {
         const firstLine = text.split('\n')[0].trim();
 
         try {
-            const response = await fetchWithAuth('/remote-click', {
+            const response = await fetchWithAuth(`/remote-click?port=${currentViewingPort}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

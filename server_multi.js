@@ -221,9 +221,10 @@ async function getOrConnectParams(port) {
 
     try {
         const conn = await connectCDP(target.url);
-        conn.port = port; // Tag it
+        conn.port = port;
+        conn.title = target.title; // Store the title (e.g., "Antigravity - my-project")
         activeConnections.set(port, conn);
-        console.log(`✅ Connected to Port ${port}`);
+        console.log(`✅ Connected to Port ${port} [${target.title}]`);
         return conn;
     } catch (e) {
         console.error(`❌ Failed to connect to port ${port}: ${e.message}`);
@@ -232,12 +233,10 @@ async function getOrConnectParams(port) {
 }
 
 // --- Scripts & Actions ---
-// reusing same scripts as server.js just wrapped in functions
 async function captureSnapshot(cdp) {
     const CAPTURE_SCRIPT = `(() => {
         const cascade = document.getElementById('cascade');
         if (!cascade) return { error: 'cascade not found' };
-        
         const cascadeStyles = window.getComputedStyle(cascade);
         const scrollContainer = cascade.querySelector('.overflow-y-auto, [data-scroll-area]') || cascade;
         const scrollInfo = {
@@ -245,13 +244,10 @@ async function captureSnapshot(cdp) {
             scrollHeight: scrollContainer.scrollHeight,
             clientHeight: scrollContainer.clientHeight
         };
-        
         const clone = cascade.cloneNode(true);
         const inputContainer = clone.querySelector('[contenteditable="true"]')?.closest('div[id^="cascade"] > div');
         if (inputContainer) inputContainer.remove();
-        
         const html = clone.outerHTML;
-        
         const rules = [];
         for (const sheet of document.styleSheets) {
             try {
@@ -259,7 +255,6 @@ async function captureSnapshot(cdp) {
             } catch (e) { }
         }
         const allCSS = rules.join('\\n');
-        
         return {
             html: html,
             css: allCSS,
@@ -274,18 +269,239 @@ async function captureSnapshot(cdp) {
             }
         };
     })()`;
-
     for (const ctx of cdp.contexts) {
         try {
-            const result = await cdp.call("Runtime.evaluate", {
-                expression: CAPTURE_SCRIPT,
-                returnByValue: true,
-                contextId: ctx.id
-            });
+            const result = await cdp.call("Runtime.evaluate", { expression: CAPTURE_SCRIPT, returnByValue: true, contextId: ctx.id });
             if (result.result?.value && !result.result.value.error) return result.result.value;
         } catch (e) { }
     }
     return null;
+}
+
+async function injectMessage(cdp, text) {
+    const safeText = JSON.stringify(text);
+    const EXPRESSION = `(async () => {
+        const cancel = document.querySelector('[data-tooltip-id="input-send-button-cancel-tooltip"]');
+        if (cancel && cancel.offsetParent !== null) return { ok:false, reason:"busy" };
+        const editors = [...document.querySelectorAll('#cascade [data-lexical-editor="true"][contenteditable="true"][role="textbox"]')]
+            .filter(el => el.offsetParent !== null);
+        const editor = editors.at(-1);
+        if (!editor) return { ok:false, error:"editor_not_found" };
+        const textToInsert = ${safeText};
+        editor.focus();
+        document.execCommand?.("selectAll", false, null);
+        document.execCommand?.("delete", false, null);
+        let inserted = false;
+        try { inserted = !!document.execCommand?.("insertText", false, textToInsert); } catch {}
+        if (!inserted) {
+            editor.textContent = textToInsert;
+            editor.dispatchEvent(new InputEvent("beforeinput", { bubbles:true, inputType:"insertText", data: textToInsert }));
+            editor.dispatchEvent(new InputEvent("input", { bubbles:true, inputType:"insertText", data: textToInsert }));
+        }
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+        const submit = document.querySelector("svg.lucide-arrow-right")?.closest("button");
+        if (submit && !submit.disabled) {
+            submit.click();
+            return { ok:true, method:"click_submit" };
+        }
+        editor.dispatchEvent(new KeyboardEvent("keydown", { bubbles:true, key:"Enter", code:"Enter" }));
+        editor.dispatchEvent(new KeyboardEvent("keyup", { bubbles:true, key:"Enter", code:"Enter" }));
+        return { ok:true, method:"enter_keypress" };
+    })()`;
+    for (const ctx of cdp.contexts) {
+        try {
+            const result = await cdp.call("Runtime.evaluate", { expression: EXPRESSION, returnByValue: true, awaitPromise: true, contextId: ctx.id });
+            if (result.result && result.result.value) return result.result.value;
+        } catch (e) { }
+    }
+    return { ok: false, reason: "no_context" };
+}
+
+async function setMode(cdp, mode) {
+    if (!['Fast', 'Planning'].includes(mode)) return { error: 'Invalid mode' };
+    const EXP = `(async () => {
+        try {
+            const allEls = Array.from(document.querySelectorAll('*'));
+            const candidates = allEls.filter(el => {
+                if (el.children.length > 0) return false;
+                const txt = el.textContent.trim();
+                return txt === 'Fast' || txt === 'Planning';
+            });
+            let modeBtn = null;
+            for (const el of candidates) {
+                let current = el;
+                for (let i = 0; i < 4; i++) {
+                    if (!current) break;
+                    const style = window.getComputedStyle(current);
+                    if (style.cursor === 'pointer' || current.tagName === 'BUTTON') {
+                        modeBtn = current;
+                        break;
+                    }
+                    current = current.parentElement;
+                }
+                if (modeBtn) break;
+            }
+            if (!modeBtn) return { error: 'Mode indicator/button not found' };
+            if (modeBtn.innerText.includes('${mode}')) return { success: true, alreadySet: true };
+            modeBtn.click();
+            await new Promise(r => setTimeout(r, 600));
+            let visibleDialog = Array.from(document.querySelectorAll('[role="dialog"]'))
+                                    .find(d => d.offsetHeight > 0 && d.innerText.includes('${mode}'));
+            if (!visibleDialog) {
+                 visibleDialog = Array.from(document.querySelectorAll('div')).find(d => {
+                        const style = window.getComputedStyle(d);
+                        return d.offsetHeight > 0 && (style.position === 'absolute' || style.position === 'fixed') && d.innerText.includes('${mode}');
+                    });
+            }
+            if (!visibleDialog) return { error: 'Dropdown not opened' };
+            const target = Array.from(visibleDialog.querySelectorAll('*')).find(el => el.children.length === 0 && el.textContent.trim() === '${mode}');
+            if (target) { target.click(); return { success: true }; }
+            return { error: 'Mode option text not found' };
+        } catch(err) { return { error: err.toString() }; }
+    })()`;
+    for (const ctx of cdp.contexts) {
+        try {
+            const res = await cdp.call("Runtime.evaluate", { expression: EXP, returnByValue: true, awaitPromise: true, contextId: ctx.id });
+            if (res.result?.value) return res.result.value;
+        } catch (e) { }
+    }
+    return { error: 'Context failed' };
+}
+
+async function stopGeneration(cdp) {
+    const EXP = `(async () => {
+        const cancel = document.querySelector('[data-tooltip-id="input-send-button-cancel-tooltip"]');
+        if (cancel && cancel.offsetParent !== null) { cancel.click(); return { success: true }; }
+        const stopBtn = document.querySelector('button svg.lucide-square')?.closest('button');
+        if (stopBtn && stopBtn.offsetParent !== null) { stopBtn.click(); return { success: true }; }
+        return { error: 'No active generation found' };
+    })()`;
+    for (const ctx of cdp.contexts) {
+        try {
+            const res = await cdp.call("Runtime.evaluate", { expression: EXP, returnByValue: true, awaitPromise: true, contextId: ctx.id });
+            if (res.result?.value) return res.result.value;
+        } catch (e) { }
+    }
+    return { error: 'Context failed' };
+}
+
+async function clickElement(cdp, { selector, index, textContent }) {
+    const EXP = `(async () => {
+        try {
+            let elements = Array.from(document.querySelectorAll('${selector}'));
+            if ('${textContent}') elements = elements.filter(el => el.textContent.includes('${textContent}'));
+            const target = elements[${index}];
+            if (target) { target.click(); return { success: true }; }
+            return { error: 'Not found' };
+        } catch(e) { return { error: e.toString() }; }
+    })()`;
+    for (const ctx of cdp.contexts) {
+        try {
+            const res = await cdp.call("Runtime.evaluate", { expression: EXP, returnByValue: true, awaitPromise: true, contextId: ctx.id });
+            if (res.result?.value?.success) return res.result.value;
+        } catch (e) { }
+    }
+    return { error: 'Click failed' };
+}
+
+async function remoteScroll(cdp, { scrollTop, scrollPercent }) {
+    const EXP = `(async () => {
+        try {
+            const chatArea = document.querySelector('#cascade .overflow-y-auto, #cascade [data-scroll-area]');
+            if (!chatArea) return { error: 'No scrollable found' };
+            if (${scrollPercent} !== undefined) {
+                const maxScroll = chatArea.scrollHeight - chatArea.clientHeight;
+                chatArea.scrollTop = maxScroll * ${scrollPercent};
+            } else {
+                chatArea.scrollTop = ${scrollTop || 0};
+            }
+            return { success: true };
+        } catch(e) { return { error: e.toString() }; }
+    })()`;
+    for (const ctx of cdp.contexts) {
+        try {
+            const res = await cdp.call("Runtime.evaluate", { expression: EXP, returnByValue: true, awaitPromise: true, contextId: ctx.id });
+            if (res.result?.value?.success) return res.result.value;
+        } catch (e) { }
+    }
+    return { error: 'Scroll failed' };
+}
+
+async function setModel(cdp, modelName) {
+    const EXP = `(async () => {
+        try {
+            const allEls = Array.from(document.querySelectorAll('*'));
+            const candidates = allEls.filter(el => el.children.length === 0 && ["Gemini", "Claude", "GPT", "Model"].some(k => el.textContent.includes(k)));
+            let modelBtn = null;
+            for (const el of candidates) {
+                let current = el;
+                for (let i = 0; i < 5; i++) {
+                    if (!current) break;
+                    if (current.tagName === 'BUTTON' || window.getComputedStyle(current).cursor === 'pointer') {
+                        if (current.querySelector('svg.lucide-chevron-up') || current.innerText.includes('Model')) { modelBtn = current; break; }
+                    }
+                    current = current.parentElement;
+                }
+                if (modelBtn) break;
+            }
+            if (!modelBtn) return { error: 'Model selector not found' };
+            modelBtn.click();
+            await new Promise(r => setTimeout(r, 600));
+            const visibleDialog = Array.from(document.querySelectorAll('[role="dialog"], div')).find(d => {
+                    const style = window.getComputedStyle(d);
+                    return d.offsetHeight > 0 && (style.position === 'absolute' || style.position === 'fixed') && d.innerText.includes('${modelName}');
+                });
+            if (!visibleDialog) return { error: 'Model list not opened' };
+            const target = Array.from(visibleDialog.querySelectorAll('*')).find(el => el.children.length === 0 && el.textContent.includes('${modelName}'));
+            if (target) { target.click(); return { success: true }; }
+            return { error: 'Model not found' };
+        } catch(err) { return { error: err.toString() }; }
+    })()`;
+    for (const ctx of cdp.contexts) {
+        try {
+            const res = await cdp.call("Runtime.evaluate", { expression: EXP, returnByValue: true, awaitPromise: true, contextId: ctx.id });
+            if (res.result?.value) return res.result.value;
+        } catch (e) { }
+    }
+    return { error: 'Context failed' };
+}
+
+async function getAppState(cdp) {
+    const EXP = `(async () => {
+        try {
+            const state = { mode: 'Unknown', model: 'Unknown' };
+            const allEls = Array.from(document.querySelectorAll('*'));
+            for (const el of allEls) {
+                if (el.children.length > 0) continue;
+                const text = (el.innerText || '').trim();
+                if (text === 'Fast' || text === 'Planning') {
+                    let current = el;
+                    for (let i = 0; i < 5; i++) {
+                        if (current && (window.getComputedStyle(current).cursor === 'pointer' || current.tagName === 'BUTTON')) { state.mode = text; break; }
+                        current = current?.parentElement;
+                    }
+                }
+                if (state.mode !== 'Unknown') break;
+            }
+            const textNodes = allEls.filter(el => el.children.length === 0 && el.innerText);
+            const modelEl = textNodes.find(el => ["Gemini", "Claude", "GPT"].some(k => el.innerText.includes(k)) && el.closest('button')?.querySelector('svg.lucide-chevron-up'));
+            if (modelEl) state.model = modelEl.innerText.trim();
+            return state;
+        } catch(e) { return { error: e.toString() }; }
+    })()`;
+    for (const ctx of cdp.contexts) {
+        try {
+            const res = await cdp.call("Runtime.evaluate", { expression: EXP, returnByValue: true, awaitPromise: true, contextId: ctx.id });
+            if (res.result?.value) return res.result.value;
+        } catch (e) { }
+    }
+    return { error: 'Context failed' };
+}
+
+function isLocalRequest(req) {
+    if (req.headers['x-forwarded-for'] || req.headers['x-forwarded-host'] || req.headers['x-real-ip']) return false;
+    const ip = req.ip || req.socket.remoteAddress || '';
+    return ip === '127.0.0.1' || ip === '::1' || ip.includes('192.168.') || ip.includes('10.') || ip.startsWith('::ffff:192.168.') || ip.startsWith('::ffff:10.');
 }
 
 // --- Main Server ---
@@ -318,13 +534,11 @@ async function createServer() {
     const getSocketPort = (ws) => ws.viewingPort || 9000;
 
     // --- API Endpoints adjusted for Multi-Session ---
-
-    // Instead of relying on global cdpConnection, we look up based on request or default
     const getConn = (req) => {
-        // TODO: In HTTP context, we don't know "who" is asking easily without session ID mapping to port.
-        // For simple MVP "sidecar", we can pass ?port=9001 in Query Params
         const port = parseInt(req.query.port) || 9000;
-        return activeConnections.get(port);
+        const conn = activeConnections.get(port);
+        if (!conn) console.log(`[ROUTING] Warning: No active connection for port ${port}`);
+        return conn;
     }
 
     app.get('/instances', async (req, res) => {
@@ -333,20 +547,82 @@ async function createServer() {
     });
 
     app.post('/switch-instance', async (req, res) => {
-        // Now this just validates availability, actual switching happens in Socket
         const { port } = req.body;
         try {
-            await getOrConnectParams(parseInt(port));
-            res.json({ success: true });
+            const conn = await getOrConnectParams(parseInt(port));
+            res.json({ success: true, title: conn.title });
         } catch (e) {
             res.status(500).json({ error: e.message });
         }
     });
 
-    app.get('/app-state', async (req, res) => {
-        // Default to first active connection or 9000
+    // --- Interactive Routes with Port Awareness ---
+    app.post('/send', async (req, res) => {
         const port = parseInt(req.query.port) || 9000;
-        res.json({ activePort: port, mode: 'Fast', model: 'Unknown' }); // Simplified for now
+        console.log(`[CMD] Sending message to Port ${port}`);
+        const conn = await getOrConnectParams(port).catch(() => null);
+        if (!conn) return res.status(503).json({ error: `Port ${port} not reachable` });
+        const result = await injectMessage(conn, req.body.message);
+        res.json(result);
+    });
+
+    app.post('/remote-click', async (req, res) => {
+        const port = parseInt(req.query.port) || 9000;
+        console.log(`[CMD] Clicking element on Port ${port}`);
+        const conn = activeConnections.get(port);
+        if (!conn) return res.status(503).json({ error: 'Port not connected' });
+        const result = await clickElement(conn, req.body);
+        res.json(result);
+    });
+
+    app.post('/remote-scroll', async (req, res) => {
+        const port = parseInt(req.query.port) || 9000;
+        console.log(`[CMD] Scrolling on Port ${port}`);
+        const conn = activeConnections.get(port);
+        if (!conn) return res.status(503).json({ error: 'Port not connected' });
+        const result = await remoteScroll(conn, req.body);
+        res.json(result);
+    });
+
+    app.post('/set-mode', async (req, res) => {
+        const port = parseInt(req.query.port) || 9000;
+        console.log(`[CMD] Setting mode for Port ${port}: ${req.body.mode}`);
+        const conn = await getOrConnectParams(port).catch(() => null);
+        if (!conn) return res.status(503).json({ error: 'Port not connected' });
+        const result = await setMode(conn, req.body.mode);
+        res.json(result);
+    });
+
+    app.post('/set-model', async (req, res) => {
+        const port = parseInt(req.query.port) || 9000;
+        console.log(`[CMD] Setting model for Port ${port}: ${req.body.model}`);
+        const conn = await getOrConnectParams(port).catch(() => null);
+        if (!conn) return res.status(503).json({ error: 'Port not connected' });
+        const result = await setModel(conn, req.body.model);
+        res.json(result);
+    });
+
+    app.post('/stop', async (req, res) => {
+        const port = parseInt(req.query.port) || 9000;
+        console.log(`[CMD] Stopping generation on Port ${port}`);
+        const conn = activeConnections.get(port);
+        if (!conn) return res.status(503).json({ error: 'Port not connected' });
+        const result = await stopGeneration(conn);
+        res.json(result);
+    });
+
+    app.get('/app-state', async (req, res) => {
+        const port = parseInt(req.query.port) || 9000;
+        let conn = activeConnections.get(port);
+        if (!conn) {
+            try { conn = await getOrConnectParams(port); } catch (e) { }
+        }
+
+        if (conn) {
+            const state = await getAppState(conn);
+            return res.json({ activePort: port, ...state });
+        }
+        res.json({ activePort: port, mode: 'Unknown', model: 'Unknown' });
     });
 
     // Remote interaction endpoints needing CDP
@@ -359,6 +635,9 @@ async function createServer() {
         // Default to Port 9000
         ws.viewingPort = 9000;
 
+        // Immediate push on first connection
+        forcePushSnapshot(ws, 9000);
+
         ws.on('message', async (msg) => {
             try {
                 const data = JSON.parse(msg);
@@ -367,11 +646,16 @@ async function createServer() {
                     const newPort = parseInt(data.port);
                     console.log(`📡 Client requested switch to ${newPort}`);
                     try {
-                        // Ensure it exists
-                        await getOrConnectParams(newPort);
+                        const conn = await getOrConnectParams(newPort);
                         ws.viewingPort = newPort;
-                        // Send immediate update
-                        ws.send(JSON.stringify({ type: 'switched', port: newPort }));
+                        ws.send(JSON.stringify({
+                            type: 'switched',
+                            port: newPort,
+                            title: conn.title
+                        }));
+
+                        // Immediate push after switch
+                        forcePushSnapshot(ws, newPort);
                     } catch (e) {
                         ws.send(JSON.stringify({ type: 'error', message: e.message }));
                     }
@@ -379,6 +663,23 @@ async function createServer() {
             } catch (e) { }
         });
     });
+
+    async function forcePushSnapshot(ws, port) {
+        try {
+            const conn = await getOrConnectParams(port);
+            const snapshot = await captureSnapshot(conn);
+            if (snapshot && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'snapshot_update',
+                    port: port,
+                    title: conn.title,
+                    ...snapshot
+                }));
+            }
+        } catch (e) {
+            console.log(`Initial push failed for port ${port}:`, e.message);
+        }
+    }
 
     // --- Centralized Broadcast Loop ---
     // Instead of one loop for "the" connection, we iterate all active connections
@@ -429,9 +730,11 @@ async function createServer() {
 
     // Filter broadcast
     function broadcastToPort(wss, port, data) {
+        const conn = activeConnections.get(port);
         const payload = JSON.stringify({
             type: 'snapshot_update',
-            port: port, // Include the port in the broadcast
+            port: port,
+            title: conn ? conn.title : `Port ${port}`,
             ...data
         });
 
