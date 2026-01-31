@@ -12,7 +12,7 @@ import WebSocket from 'ws';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { inspectUI } from './ui_inspector.js';
-import { execSync } from 'child_process';
+import { execSync, spawn, exec } from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -25,9 +25,19 @@ const APP_PASSWORD = process.env.APP_PASSWORD || 'antigravity';
 const AUTH_COOKIE_NAME = 'ag_auth_token';
 let AUTH_TOKEN = 'ag_default_token';
 
+// --- Global Error Handlers (Moved to top to prevent startup crashes) ---
+process.on('uncaughtException', (err) => {
+    console.error('💥 Uncaught Exception:', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('💥 Unhandled Rejection:', reason);
+});
+
 // --- Multi-Instance State ---
 // Map<Port, CDPConnection>
 const activeConnections = new Map();
+// Map<Port, Promise> to prevent parallel connecting to the same port
+const connectionLocks = new Map();
 // Map<Port, LastSnapshot>
 const snapshotCache = new Map();
 
@@ -109,6 +119,10 @@ async function findAllInstances() {
     const instances = [];
     for (const port of PORTS) {
         try {
+            // Check if port is even open first
+            const inUse = await isPortInUse(port);
+            if (!inUse) continue;
+
             const list = await getJson(`http://127.0.0.1:${port}/json/list`);
             let candidate = list.find(t => t.url?.includes('workbench.html'));
             if (!candidate) candidate = list.find(t => t.type === 'page' && t.webSocketDebuggerUrl);
@@ -120,16 +134,30 @@ async function findAllInstances() {
                     title: candidate.title || `Antigravity (${port})`
                 });
             }
-        } catch (e) { }
+        } catch (e) {
+            console.log(`🔍 Port ${port} probe failed: ${e.message}`);
+        }
     }
     return instances;
 }
 
+
 async function connectCDP(url) {
     const ws = new WebSocket(url);
     await new Promise((resolve, reject) => {
-        ws.on('open', resolve);
-        ws.on('error', reject);
+        const timeout = setTimeout(() => {
+            ws.close();
+            reject(new Error(`CDP connection to ${url} timed out (2s)`));
+        }, 2000); // Reduced from 5000ms to 2000ms for faster port switching
+
+        ws.on('open', () => {
+            clearTimeout(timeout);
+            resolve();
+        });
+        ws.on('error', (err) => {
+            clearTimeout(timeout);
+            reject(err);
+        });
     });
 
     let idCounter = 1;
@@ -197,40 +225,177 @@ async function connectCDP(url) {
 
 // --- Connection Manager ---
 
-// Ensure we have a valid connection to the requested port
-async function getOrConnectParams(port) {
-    if (activeConnections.has(port)) {
-        const conn = activeConnections.get(port);
-        if (conn.ws.readyState === WebSocket.OPEN) {
-            return conn;
-        } else {
-            // Stale connection, remove it
-            console.log(`♻️  Connection to ${port} is dead/closed. Cleaning up.`);
-            activeConnections.delete(port);
-        }
-    }
-
-    // New connection
-    console.log(`🔌 Connecting to Port ${port}...`);
-    const instances = await findAllInstances();
-    const target = instances.find(i => i.port === port);
-
-    if (!target) {
-        throw new Error(`Instance on port ${port} not found. Launch it first.`);
-    }
-
+async function isCDPAlive(conn) {
     try {
-        const conn = await connectCDP(target.url);
-        conn.port = port;
-        conn.title = target.title; // Store the title (e.g., "Antigravity - my-project")
-        activeConnections.set(port, conn);
-        console.log(`✅ Connected to Port ${port} [${target.title}]`);
-        return conn;
+        const result = await Promise.race([
+            conn.call("Runtime.evaluate", { expression: "1+1", returnByValue: true }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 1500))
+        ]);
+        return result && result.result && result.result.value === 2;
     } catch (e) {
-        console.error(`❌ Failed to connect to port ${port}: ${e.message}`);
-        throw e;
+        return false;
     }
 }
+
+// Ensure we have a valid connection to the requested port
+async function getOrConnectParams(port, forceReconnect = false) {
+    if (activeConnections.has(port) && !forceReconnect) {
+        const conn = activeConnections.get(port);
+        // Skip health check if WebSocket is OPEN - trust the connection for faster switching
+        if (conn.ws.readyState === WebSocket.OPEN) {
+            return conn;
+        }
+        activeConnections.delete(port);
+    }
+
+    // Check if another connection attempt is already in progress
+    if (connectionLocks.has(port)) {
+        console.log(`⏳ Connection already in progress for Port ${port}, waiting...`);
+        return connectionLocks.get(port);
+    }
+
+    const connectPromise = (async () => {
+        try {
+            console.log(`🔌 [CONNECT] Starting for Port ${port}...`);
+            const instances = await findAllInstances();
+            const target = instances.find(i => i.port === port);
+
+            if (!target) {
+                console.error(`❌ [CONNECT] Port ${port} not found in instances.`);
+                throw new Error(`Instance on port ${port} not found. Launch it first.`);
+            }
+
+            console.log(`🔌 [CONNECT] Socket connecting to ${target.url}...`);
+            const conn = await connectCDP(target.url);
+            conn.port = port;
+            conn.title = target.title;
+            activeConnections.set(port, conn);
+            console.log(`✅ [CONNECT] Port ${port} established [${target.title}]`);
+            return conn;
+        } catch (e) {
+            console.error(`❌ [CONNECT] Port ${port} failed:`, e.message);
+            throw e;
+        } finally {
+            // CRITICAL: Always clear the lock so subsequent attempts can retry
+            connectionLocks.delete(port);
+        }
+    })();
+
+    connectionLocks.set(port, connectPromise);
+    return connectPromise;
+}
+
+
+// --- Process Management ---
+const runningProcesses = new Map();
+
+async function spawnInstance(port) {
+    if (runningProcesses.has(port)) {
+        const isRunning = await isPortInUse(port);
+        if (isRunning) throw new Error(`Port ${port} is already in use.`);
+        runningProcesses.delete(port);
+    }
+
+    console.log(`🚀 Spawning Background Instance for Port ${port}...`);
+    const userData = join(__dirname, `.user_data_${port}`);
+    const cmd = `"D:\\Program Files\\Antigravity\\Antigravity.exe"`;
+    const args = [
+        `--remote-debugging-port=${port}`,
+        `--user-data-dir="${userData}"`,
+        '--no-first-run',           // Suppress setup/welcome screens
+        '--disable-workspace-trust' // Avoid trust dialogs that block loading
+    ];
+
+    const fullCmd = `${cmd} ${args.join(' ')}`;
+    console.log(`[SPAWN] [PERSISTENCE] Executing: ${fullCmd}`);
+
+    const child = spawn(fullCmd, [], {
+        detached: true,
+        stdio: 'ignore',
+        shell: true
+    });
+
+    child.on('error', (err) => {
+        console.error(`❌ Spawn error for Port ${port}:`, err);
+    });
+
+    child.unref();
+    runningProcesses.set(port, child);
+
+    await new Promise(r => setTimeout(r, 6000));
+    return { success: true };
+}
+
+
+async function killInstance(port) {
+    console.log(`🛑 Attempting to kill instance on Port ${port}...`);
+
+    // 1. Try Graceful Shutdown via CDP first (to save session/project state)
+    try {
+        let conn = activeConnections.get(port);
+        // If not connected but process exists, try to connect briefly to say "goodbye"
+        if (!conn) {
+            try {
+                conn = await getOrConnectParams(port);
+            } catch (e) { /* ignore */ }
+        }
+
+        if (conn) {
+            console.log(`👋 Sending graceful close command to Port ${port}...`);
+            // Attempt Browser.close with a timeout (prevent hanging on "Unsaved Changes" dialogs)
+            await Promise.race([
+                conn.call('Browser.close'),
+                new Promise(r => setTimeout(r, 1500))
+            ]).catch(() => { });
+
+            // Wait a moment for it to write state and exit
+            await new Promise(r => setTimeout(r, 1000));
+        }
+    } catch (e) {
+        console.log(`⚠️ Graceful shutdown failed for Port ${port}, proceeding to force kill.`);
+    }
+
+    // 2. Force Kill (Cleanup whatever is left)
+    return new Promise((resolve) => {
+        const portCmd = `for /f "tokens=5" %a in ('netstat -aon ^| findstr :${port} ^| findstr LISTENING') do taskkill /f /pid %a`;
+        exec(portCmd, (err) => {
+            if (!err) {
+                console.log(`✅ Killed Port ${port} via netstat.`);
+            }
+
+            // Fallback: search by debug port flag in command line
+            const flag = `--remote-debugging-port=${port}`;
+            const psCmd = `powershell -Command "Get-WmiObject Win32_Process -Filter \\"name='antigravity.exe'\\" | Where-Object { $_.CommandLine -like '*${flag}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"`;
+
+            exec(psCmd, () => {
+                activeConnections.delete(port);
+                snapshotCache.delete(port);
+                runningProcesses.delete(port);
+                resolve({ success: true });
+            });
+        });
+    });
+}
+
+
+async function isPortInUse(port) {
+    return new Promise((resolve) => {
+        // Use a more precise findstr to avoid matching substring of ports
+        // We match for :PORT followed by a space to target the local address column
+        exec(`netstat -ano | findstr LISTENING | findstr :${port}`, (err, stdout) => {
+            if (err || !stdout) return resolve(false);
+            const lines = stdout.split('\n');
+            const match = lines.some(line => {
+                const parts = line.trim().split(/\s+/);
+                const localAddr = parts[1] || ''; // Second column is local address:port
+                return localAddr.endsWith(`:${port}`);
+            });
+            resolve(match);
+        });
+    });
+}
+
+
 
 // --- Scripts & Actions ---
 async function captureSnapshot(cdp) {
@@ -255,9 +420,25 @@ async function captureSnapshot(cdp) {
             } catch (e) { }
         }
         const allCSS = rules.join('\\n');
+        
+        // --- NEW: URL Rewriting for vscode-file:// assets ---
+        // These URLs look like vscode-file://vscode-app/d:/Program%20Files/Antigravity/resources/app/...
+        // We rewrite them to /vscode-resources/...
+        const rewriteUrl = (str) => {
+            if (!str) return str;
+            try {
+                // Use RegExp constructor to avoid slash-escaping hell in backtick strings
+                const pattern = 'vscode-file://vscode-app/.*?/resources/app/';
+                const regex = new RegExp(pattern, 'g');
+                return str.replace(regex, '/vscode-resources/');
+            } catch (e) {
+                return str;
+            }
+        };
+
         return {
-            html: html,
-            css: allCSS,
+            html: rewriteUrl(html),
+            css: rewriteUrl(allCSS),
             backgroundColor: cascadeStyles.backgroundColor,
             color: cascadeStyles.color,
             fontFamily: cascadeStyles.fontFamily,
@@ -311,11 +492,18 @@ async function injectMessage(cdp, text) {
     for (const ctx of cdp.contexts) {
         try {
             const result = await cdp.call("Runtime.evaluate", { expression: EXPRESSION, returnByValue: true, awaitPromise: true, contextId: ctx.id });
-            if (result.result && result.result.value) return result.result.value;
-        } catch (e) { }
+            if (result.result && result.result.value) {
+                console.log(`[INJECT] Port ${cdp.port} success via context ${ctx.id}:`, result.result.value);
+                return result.result.value;
+            }
+        } catch (e) {
+            console.error(`[INJECT] Port ${cdp.port} context ${ctx.id} error:`, e.message);
+        }
     }
+    console.error(`[INJECT] Port ${cdp.port} failed: No working context out of ${cdp.contexts.length}`);
     return { ok: false, reason: "no_context" };
 }
+
 
 async function setMode(cdp, mode) {
     if (!['Fast', 'Planning'].includes(mode)) return { error: 'Invalid mode' };
@@ -501,7 +689,9 @@ async function getAppState(cdp) {
 function isLocalRequest(req) {
     if (req.headers['x-forwarded-for'] || req.headers['x-forwarded-host'] || req.headers['x-real-ip']) return false;
     const ip = req.ip || req.socket.remoteAddress || '';
-    return ip === '127.0.0.1' || ip === '::1' || ip.includes('192.168.') || ip.includes('10.') || ip.startsWith('::ffff:192.168.') || ip.startsWith('::ffff:10.');
+    return ip === '127.0.0.1' || ip === '::1' ||
+        ip.includes('192.168.') || ip.includes('10.') || ip.includes('100.') ||
+        ip.startsWith('::ffff:192.168.') || ip.startsWith('::ffff:10.') || ip.startsWith('::ffff:100.');
 }
 
 // --- Main Server ---
@@ -510,9 +700,20 @@ async function createServer() {
     const server = http.createServer(app);
     const wss = new WebSocketServer({ server });
 
+    const ACTIVE_PORTS = [9000, 9001, 9002, 9003];
     app.use(express.static(join(__dirname, 'public')));
     app.use(express.json({ limit: '50mb' }));
     app.use(cookieParser('antigravity_secret_key_1337'));
+
+    // Serve Antigravity internal resources (icons, etc.)
+    const vscodeResourcesPath = "D:/Program Files/Antigravity/resources/app";
+    if (fs.existsSync(vscodeResourcesPath)) {
+        console.log(`📂 Serving VSCode resources from: ${vscodeResourcesPath}`);
+        app.use('/vscode-resources', express.static(vscodeResourcesPath));
+    }
+
+    // Fix favicon 404
+    app.get('/favicon.ico', (req, res) => res.status(204).end());
 
     // Auth
     app.post('/login', (req, res) => {
@@ -531,6 +732,67 @@ async function createServer() {
     });
 
     // Helper to get socket's viewed port
+    // --- Instance & Slot Management ---
+    app.get('/instances', async (req, res) => {
+        const list = await findAllInstances();
+        res.json({ instances: list });
+    });
+
+    app.get('/slots', async (req, res) => {
+        const instances = await findAllInstances();
+        const slots = [9000, 9001, 9002, 9003].map(port => {
+            const running = instances.find(i => i.port === port);
+            return {
+                port,
+                title: running ? running.title : `Slot ${port}`,
+                running: !!running
+            };
+        });
+        res.json({ slots });
+    });
+
+    app.get('/debug-connections', (req, res) => {
+        const active = Array.from(activeConnections.entries()).map(([port, conn]) => ({
+            port,
+            title: conn.title,
+            contexts: conn.contexts.length,
+            wsReady: conn.ws.readyState === WebSocket.OPEN
+        }));
+        const locks = Array.from(connectionLocks.keys());
+        res.json({ active, locks });
+    });
+
+    app.post('/instance/start', async (req, res) => {
+        const { port } = req.body;
+        try {
+            await spawnInstance(parseInt(port));
+            res.json({ success: true });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    app.post('/instance/stop', async (req, res) => {
+        const { port } = req.body;
+        try {
+            await killInstance(parseInt(port));
+            res.json({ success: true });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    app.post('/instance/kill-all', async (req, res) => {
+        try {
+            exec(`taskkill /f /im antigravity.exe`);
+            activeConnections.clear();
+            snapshotCache.clear();
+            res.json({ success: true });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
     const getSocketPort = (ws) => ws.viewingPort || 9000;
 
     // --- API Endpoints adjusted for Multi-Session ---
@@ -559,29 +821,53 @@ async function createServer() {
     // --- Interactive Routes with Port Awareness ---
     app.post('/send', async (req, res) => {
         const port = parseInt(req.query.port) || 9000;
-        console.log(`[CMD] Sending message to Port ${port}`);
-        const conn = await getOrConnectParams(port).catch(() => null);
-        if (!conn) return res.status(503).json({ error: `Port ${port} not reachable` });
-        const result = await injectMessage(conn, req.body.message);
-        res.json(result);
+        console.log(`[TRACE] /send received for Port ${port}. Message length: ${req.body.message?.length}`);
+
+        try {
+            const conn = await getOrConnectParams(port);
+            console.log(`[TRACE] Port ${port} connection acquired. Injecting...`);
+            const result = await injectMessage(conn, req.body.message);
+            console.log(`[TRACE] Port ${port} inject result:`, result);
+            res.json(result);
+
+            // Immediate visual feedback
+            setTimeout(() => triggerSnapshotForPort(port), 150);
+            setTimeout(() => triggerSnapshotForPort(port), 600);
+        } catch (e) {
+            console.error(`[TRACE] Port ${port} send failed:`, e.message);
+            res.status(503).json({ error: e.message });
+        }
     });
+
 
     app.post('/remote-click', async (req, res) => {
         const port = parseInt(req.query.port) || 9000;
         console.log(`[CMD] Clicking element on Port ${port}`);
-        const conn = activeConnections.get(port);
-        if (!conn) return res.status(503).json({ error: 'Port not connected' });
-        const result = await clickElement(conn, req.body);
-        res.json(result);
+        try {
+            const conn = await getOrConnectParams(port);
+            const result = await clickElement(conn, req.body);
+            res.json(result);
+
+            // Immediate visual feedback
+            setTimeout(() => triggerSnapshotForPort(port), 300);
+        } catch (e) {
+            res.status(503).json({ error: e.message });
+        }
     });
 
     app.post('/remote-scroll', async (req, res) => {
         const port = parseInt(req.query.port) || 9000;
         console.log(`[CMD] Scrolling on Port ${port}`);
-        const conn = activeConnections.get(port);
-        if (!conn) return res.status(503).json({ error: 'Port not connected' });
-        const result = await remoteScroll(conn, req.body);
-        res.json(result);
+        try {
+            const conn = await getOrConnectParams(port);
+            const result = await remoteScroll(conn, req.body);
+            res.json(result);
+
+            // Instant sync feedback
+            triggerSnapshotForPort(port);
+        } catch (e) {
+            res.status(503).json({ error: e.message });
+        }
     });
 
     app.post('/set-mode', async (req, res) => {
@@ -591,6 +877,7 @@ async function createServer() {
         if (!conn) return res.status(503).json({ error: 'Port not connected' });
         const result = await setMode(conn, req.body.mode);
         res.json(result);
+        setTimeout(() => triggerSnapshotForPort(port), 300);
     });
 
     app.post('/set-model', async (req, res) => {
@@ -625,41 +912,69 @@ async function createServer() {
         res.json({ activePort: port, mode: 'Unknown', model: 'Unknown' });
     });
 
+    app.get('/snapshot', async (req, res) => {
+        const port = parseInt(req.query.port) || 9000;
+        try {
+            const conn = await getOrConnectParams(port);
+            const snapshot = await captureSnapshot(conn);
+            if (snapshot) {
+                snapshot.hash = hashString(snapshot.html);
+                res.json(snapshot);
+            } else {
+                res.status(503).json({ error: `Port ${port} snapshot failed` });
+            }
+        } catch (e) {
+            res.status(503).json({ error: e.message });
+        }
+    });
+
     // Remote interaction endpoints needing CDP
     // We update frontend to send ?port=... in fetch calls OR rely on socket commands
 
     // --- WebSocket ---
     wss.on('connection', (ws, req) => {
         console.log('📱 Client Connected');
+        ws.isAlive = true;
+        ws.on('pong', () => ws.isAlive = true);
 
-        // Default to Port 9000
+        // Default to 9000 to ensure polling starts even before switch_port message
         ws.viewingPort = 9000;
-
-        // Immediate push on first connection
-        forcePushSnapshot(ws, 9000);
 
         ws.on('message', async (msg) => {
             try {
                 const data = JSON.parse(msg);
 
+                // Health check ping/pong (for detecting zombie connections on mobile)
+                if (data.type === 'ping') {
+                    ws.send(JSON.stringify({ type: 'pong' }));
+                    return;
+                }
+
                 if (data.type === 'switch_port') {
                     const newPort = parseInt(data.port);
                     console.log(`📡 Client requested switch to ${newPort}`);
+
+                    // 1. Immediately update subscription so broadcasts reach the client during connection wait
+                    ws.viewingPort = newPort;
+
+                    // 2. Clear hash cache for this port to force immediate broadcast
+                    snapshotCache.delete(newPort);
+
                     try {
                         const conn = await getOrConnectParams(newPort);
-                        ws.viewingPort = newPort;
                         ws.send(JSON.stringify({
                             type: 'switched',
                             port: newPort,
                             title: conn.title
                         }));
 
-                        // Immediate push after switch
+                        // Immediate push after connection is confirmed
                         forcePushSnapshot(ws, newPort);
                     } catch (e) {
                         ws.send(JSON.stringify({ type: 'error', message: e.message }));
                     }
                 }
+
             } catch (e) { }
         });
     });
@@ -669,6 +984,7 @@ async function createServer() {
             const conn = await getOrConnectParams(port);
             const snapshot = await captureSnapshot(conn);
             if (snapshot && ws.readyState === WebSocket.OPEN) {
+                snapshot.hash = hashString(snapshot.html);
                 ws.send(JSON.stringify({
                     type: 'snapshot_update',
                     port: port,
@@ -682,7 +998,36 @@ async function createServer() {
     }
 
     // --- Centralized Broadcast Loop ---
-    // Instead of one loop for "the" connection, we iterate all active connections
+    // Heartbeat logic for mobile stability
+    const interval = setInterval(() => {
+        wss.clients.forEach(ws => {
+            if (ws.isAlive === false) return ws.terminate();
+            ws.isAlive = false;
+            ws.ping();
+        });
+    }, 30000);
+
+    // Reuseable helper to trigger a snapshot and broadcast for a specific port
+    async function triggerSnapshotForPort(port) {
+        try {
+            let conn = activeConnections.get(port);
+            if (!conn || conn.ws.readyState !== WebSocket.OPEN) {
+                conn = await getOrConnectParams(port);
+            }
+            const snapshot = await captureSnapshot(conn);
+            if (snapshot) {
+                const hash = hashString(snapshot.html);
+                snapshotCache.set(port, hash); // Update cache so heartbeats don't re-send it
+                snapshot.hash = hash;
+                broadcastToPort(wss, port, snapshot);
+                return snapshot;
+            }
+        } catch (e) {
+            console.error(`Trigger failed for port ${port}:`, e.message);
+        }
+        return null;
+    }
+
     setInterval(async () => {
         // 1. Identify which ports are actually being watched
         const watchedPorts = new Set();
@@ -692,16 +1037,28 @@ async function createServer() {
             }
         });
 
-        // 2. Fetch snapshots for watched ports
+        // 2. Fetch snapshots or maintain health for watched ports
         for (const port of watchedPorts) {
             try {
-                // Ensure connection exists
                 let conn = activeConnections.get(port);
-                if (!conn || conn.ws.readyState !== WebSocket.OPEN) {
+
+                // If we have a cached connection, check its health periodically
+                if (conn && conn.ws.readyState === WebSocket.OPEN) {
+                    const now = Date.now();
+                    // Every 30 seconds (roughly 30 * POLL_INTERVAL), do a deep health check if idle
+                    if (!conn.lastCheck || (now - conn.lastCheck > 30000)) {
+                        const alive = await isCDPAlive(conn);
+                        conn.lastCheck = now;
+                        if (!alive) {
+                            console.log(`📡 Port ${port} heartbeat failed. Forcing reconnect...`);
+                            conn = await getOrConnectParams(port, true);
+                        }
+                    }
+                } else {
+                    // No connection or closed, attempt to establish
                     try {
                         conn = await getOrConnectParams(port);
                     } catch (e) {
-                        // Cannot connect, send error state to viewers
                         const errorPayload = {
                             error: `Waiting for Port ${port}...`,
                             html: `<div style="padding:20px;text-align:center;color:#666;"><h3>Connecting to Port ${port}...</h3><p>${e.message}</p></div>`
@@ -711,14 +1068,17 @@ async function createServer() {
                     }
                 }
 
+                if (!conn) continue;
+
                 // Capture
                 const snapshot = await captureSnapshot(conn);
                 if (snapshot) {
                     const hash = hashString(snapshot.html);
-                    // Only broadcast if changed (per port cache)
                     const lastHash = snapshotCache.get(port);
+                    // Only broadcast if changed (per port cache) - or if cache was cleared by switch_port
                     if (hash !== lastHash) {
                         snapshotCache.set(port, hash);
+                        snapshot.hash = hash;
                         broadcastToPort(wss, port, snapshot);
                     }
                 }
@@ -727,6 +1087,7 @@ async function createServer() {
             }
         }
     }, POLL_INTERVAL);
+
 
     // Filter broadcast
     function broadcastToPort(wss, port, data) {
@@ -745,9 +1106,26 @@ async function createServer() {
         });
     }
 
+    // Warmup connections to all ports for instant switching
+    async function warmupConnections() {
+        console.log('🔥 Warming up connections to all ports...');
+        for (const port of [9000, 9001, 9002, 9003]) {
+            try {
+                await getOrConnectParams(port);
+                console.log(`✅ Port ${port} warmed up`);
+            } catch (e) {
+                console.log(`⚠️  Port ${port} warmup skipped: ${e.message}`);
+            }
+        }
+        console.log('🔥 Warmup complete!');
+    }
+
     server.listen(SERVER_PORT, '0.0.0.0', () => {
         console.log(`🚀 Multi-Instance Server running on port ${SERVER_PORT}`);
         console.log(`   (Supports independent viewing of Ports 9000-9003)`);
+
+        // Non-blocking warmup after 2 seconds
+        setTimeout(() => warmupConnections(), 2000);
     });
 }
 

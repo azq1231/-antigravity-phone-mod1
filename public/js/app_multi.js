@@ -26,8 +26,11 @@ let ws = null;
 let idleTimer = null;
 let lastHash = '';
 let currentMode = 'Fast';
+let pingTimeout = null;
+let pongReceived = false;
 
-let currentViewingPort = 9000;
+// Load last viewed port from storage, default to 9000
+let currentViewingPort = parseInt(localStorage.getItem('lastViewingPort')) || 9000;
 
 // --- Auth Utilities ---
 async function fetchWithAuth(url, options = {}) {
@@ -134,14 +137,27 @@ function connectWebSocket() {
     ws.onopen = () => {
         console.log('WS Connected');
         updateStatus(true);
-        // Request initial state from server
-        // (Server will start sending snapshot_updates)
+
+        // CRITICAL: Immediately tell the server WHICH port we want to watch
+        // This prevents the server from defaulting us back to 9000
+        ws.send(JSON.stringify({
+            type: 'switch_port',
+            port: currentViewingPort
+        }));
     };
 
     ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
         if (data.type === 'error' && data.message === 'Unauthorized') {
             window.location.href = '/login.html';
+            return;
+        }
+
+        // Handle pong response for health check
+        if (data.type === 'pong') {
+            pongReceived = true;
+            if (pingTimeout) clearTimeout(pingTimeout);
+            console.log('[HEALTH] Pong received, connection healthy');
             return;
         }
 
@@ -157,6 +173,7 @@ function connectWebSocket() {
 
         if (data.type === 'switched') {
             currentViewingPort = data.port;
+            localStorage.setItem('lastViewingPort', currentViewingPort);
             const name = cleanInstanceName(data);
             instanceText.textContent = name;
             fetchAppState(); // Sync mode/model for the new port
@@ -165,6 +182,13 @@ function connectWebSocket() {
 
     function cleanInstanceName(data) {
         if (!data.title) return `Port ${data.port}`;
+
+        // Also ensure currentViewingPort stays in sync if server forces an update
+        if (data.port && data.port !== currentViewingPort) {
+            currentViewingPort = data.port;
+            localStorage.setItem('lastViewingPort', currentViewingPort);
+        }
+
         // Remove "Antigravity - " prefix if it exists to make it cleaner on mobile
         let name = data.title.replace(/^Antigravity\s*-\s*/i, '');
         // Limit length
@@ -192,10 +216,59 @@ function updateStatus(connected) {
     }
 }
 
-// --- Rendering ---
+// --- Connection Health Check (for detecting zombie connections after screen off) ---
+function checkConnectionHealth() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+        console.log('[HEALTH] WebSocket not open, reconnecting...');
+        updateStatus(false);
+        connectWebSocket();
+        return;
+    }
+
+    // Send a ping message and expect a pong within 3 seconds
+    pongReceived = false;
+    try {
+        ws.send(JSON.stringify({ type: 'ping' }));
+        console.log('[HEALTH] Ping sent, waiting for pong...');
+    } catch (e) {
+        console.log('[HEALTH] Failed to send ping, reconnecting...');
+        ws.close();
+        return;
+    }
+
+    pingTimeout = setTimeout(() => {
+        if (!pongReceived) {
+            console.log('[HEALTH] Ping timeout (3s), forcing reconnect...');
+            updateStatus(false);
+            ws.close(); // This will trigger onclose and auto-reconnect
+        }
+    }, 3000);
+}
+
+// --- Visibility API: Detect screen wake and verify connection ---
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+        console.log('[WAKE] Screen resumed, checking connection health...');
+        checkConnectionHealth();
+    }
+});
 // Renamed from loadSnapshot to renderSnapshot as it now takes data
-function renderSnapshot(data) {
-    if (!data || !data.html) return;
+function renderSnapshot(data, force = false) {
+    if (!data) return;
+
+    // If it's an error/waiting state, show the message even if no HTML
+    if (data.error && data.error.includes('Waiting')) {
+        chatContent.innerHTML = data.html || `<div class="loading-state"><p>${data.error}</p></div>`;
+        return;
+    }
+
+    if (!data.html) return;
+
+    // Skip if hash matches and not forced (Performance boost)
+    if (!force && data.hash && data.hash === lastHash) {
+        return;
+    }
+    if (data.hash) lastHash = data.hash;
 
     try {
         // Capture scroll state BEFORE updating content
@@ -404,8 +477,29 @@ function renderSnapshot(data) {
     }
 }
 
-// Legacy function to maintain compatibility, but now does nothing as WS handles it
-async function loadSnapshot() { }
+// Helper to manually trigger a snapshot fetch (used as fallback or for manual refresh)
+async function loadSnapshot() {
+    try {
+        // Add spin animation to refresh button
+        const icon = refreshBtn.querySelector('svg');
+        if (icon) {
+            icon.classList.remove('spin-anim');
+            void icon.offsetWidth; // trigger reflow
+            icon.classList.add('spin-anim');
+        }
+
+        const response = await fetchWithAuth(`/snapshot?port=${currentViewingPort}`);
+        if (!response.ok) {
+            if (response.status === 503) return;
+            throw new Error('Failed to load');
+        }
+
+        const data = await response.json();
+        renderSnapshot(data, true); // Force render since it was explicitly requested
+    } catch (err) {
+        console.error('Snapshot load error:', err);
+    }
+}
 
 
 // --- Mobile Code Block Copy Functionality ---
@@ -767,36 +861,116 @@ modeBtn.addEventListener('click', () => {
     });
 });
 
-// --- Instance Switching ---
+// --- Instance & Slot Management ---
 const instanceBtn = document.getElementById('instanceBtn');
 const instanceText = document.getElementById('instanceText');
 
-instanceBtn.addEventListener('click', async () => {
+instanceBtn.addEventListener('click', () => openSlotManager());
+
+async function openSlotManager() {
+    modalTitle.textContent = 'Slot Manager / 工作槽位管理';
+    modalList.innerHTML = '<div class="loading-state"><div class="loading-spinner"></div></div>';
+    openModalUI();
+
     try {
-        const res = await fetchWithAuth('/instances');
+        const res = await fetchWithAuth('/slots');
         const data = await res.json();
-
-        const options = data.instances.map(i => {
-            const cleanName = i.title.replace(/^Antigravity\s*-\s*/i, '');
-            return `${i.port}: ${cleanName}`;
-        });
-
-        openModal('Select Instance', options, async (selection) => {
-            const port = selection.split(':')[0].trim();
-            instanceText.textContent = 'Switching...';
-
-            // Re-route switch through WebSocket for this specific session
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({
-                    type: 'switch_port',
-                    port: port
-                }));
-            }
-        });
+        renderSlots(data.slots);
     } catch (e) {
-        console.error('Failed to list instances', e);
+        modalList.innerHTML = `<div style="padding:20px; color:var(--error);">Failed to load slots: ${e.message}</div>`;
     }
-});
+}
+
+function renderSlots(slots) {
+    modalList.innerHTML = '';
+    slots.forEach(slot => {
+        const item = document.createElement('div');
+        item.className = 'slot-item';
+
+        const cleanTitle = (slot.title || '').replace(/^Antigravity\s*-\s*/i, '');
+        const isCurrent = slot.port === currentViewingPort;
+
+        item.innerHTML = `
+            <div class="slot-info">
+                <div class="slot-port">PORT ${slot.port} ${isCurrent ? '• VIEWING' : ''}</div>
+                <div class="slot-title">${cleanTitle || 'Slot ' + slot.port}</div>
+                <div class="slot-status ${slot.running ? 'status-running' : 'status-stopped'}">
+                    ${slot.running ? 'Running' : 'Stopped'}
+                </div>
+            </div>
+            <div class="slot-controls">
+                ${slot.running
+                ? `<button class="btn-s btn-switch" onclick="handleSlotAction('switch', ${slot.port})">Switch</button>
+                       <button class="btn-s btn-stop" onclick="handleSlotAction('stop', ${slot.port})">Stop</button>`
+                : `<button class="btn-s btn-start" onclick="handleSlotAction('start', ${slot.port})">Start</button>`
+            }
+            </div>
+        `;
+        modalList.appendChild(item);
+    });
+
+    const killAllBtn = document.createElement('button');
+    killAllBtn.className = 'btn-kill-all';
+    killAllBtn.textContent = 'Panic: Kill All Instances (清理記憶體)';
+    killAllBtn.onclick = () => handleSlotAction('kill-all');
+    modalList.appendChild(killAllBtn);
+}
+
+async function handleSlotAction(action, port) {
+    console.log(`[SLOT] Action: ${action} on Port: ${port}`);
+
+    if (action === 'switch') {
+        instanceText.textContent = 'Switching...';
+
+        // 1. Update local port immediately so commands are routed correctly
+        currentViewingPort = port;
+        localStorage.setItem('lastViewingPort', port);
+
+        // 2. Clear content and show loading so user knows a switch is in progress
+        chatContent.innerHTML = `
+            <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; color:var(--text-muted); padding:40px; text-align:center;">
+                <div class="loading-spinner" style="margin-bottom:20px;"></div>
+                <h3>Switching to Port ${port}...</h3>
+                <p>Establishing connection to Antigravity instance.</p>
+            </div>
+        `;
+
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'switch_port', port }));
+        }
+        closeModal();
+        return;
+    }
+
+
+    const endpoint = action === 'kill-all' ? '/instance/kill-all' : `/instance/${action}`;
+    try {
+        const res = await fetchWithAuth(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ port })
+        });
+        const data = await res.json();
+        if (data.success) {
+            openSlotManager();
+        } else {
+            alert('Action failed: ' + data.error);
+        }
+    } catch (e) {
+        alert('Action error: ' + e.message);
+    }
+}
+
+window.handleSlotAction = handleSlotAction;
+
+function openModalUI() {
+    modalOverlay.classList.add('show');
+}
+function closeModal() {
+    modalOverlay.classList.remove('show');
+}
+window.closeModal = closeModal;
+
 
 modelBtn.addEventListener('click', () => {
     openModal('Select Model', MODELS, async (model) => {

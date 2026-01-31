@@ -536,3 +536,104 @@ textarea::-webkit-scrollbar {
     font-size: 16px;
     padding: 0 4px;
 }
+
+/* Slot Manager Styles */
+.slot-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 14px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 12px;
+    margin-bottom: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.slot-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.slot-port {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.slot-title {
+    font-weight: 600;
+    color: var(--text-main);
+    font-size: 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 140px;
+}
+
+.slot-status {
+    font-size: 9px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    width: fit-content;
+    text-transform: uppercase;
+    font-weight: 700;
+}
+
+.status-running {
+    background: rgba(34, 197, 94, 0.2);
+    color: #4ade80;
+}
+
+.status-stopped {
+    background: rgba(148, 163, 184, 0.2);
+    color: #94a3b8;
+}
+
+.slot-controls {
+    display: flex;
+    gap: 8px;
+}
+
+.btn-s {
+    padding: 6px 12px;
+    font-size: 11px;
+    font-weight: 700;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-s:active {
+    transform: scale(0.9);
+}
+
+.btn-start {
+    background: var(--success);
+    color: white;
+}
+
+.btn-stop {
+    background: var(--error);
+    color: white;
+}
+
+.btn-switch {
+    background: var(--accent);
+    color: white;
+}
+
+.btn-kill-all {
+    width: 100%;
+    padding: 14px;
+    background: rgba(239, 68, 68, 0.1);
+    color: #f87171;
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    border-radius: 12px;
+    font-weight: 700;
+    margin-top: 20px;
+    cursor: pointer;
+    font-size: 13px;
+}
