@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Antigravity Connect V3 (Layout Fix)</title>
+    <link rel="stylesheet" href="css/style.css">
+    <style>
+        :root {
+            --bg-app: #0f172a;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --border-color: #334155;
+        }
+
+        body {
+            background-color: var(--bg-app);
+            color: var(--text-main);
+            font-family: 'Inter', system-ui, sans-serif;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        .v3-badge {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: #8b5cf6;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            z-index: 9999;
+        }
+
+        .header {
+            padding: 10px 15px;
+            border-bottom: 1px solid var(--border-color);
+            background: rgba(15, 23, 42, 0.8);
+            backdrop-filter: blur(8px);
+        }
+
+        .header h1 {
+            font-size: 16px;
+            margin: 0;
+        }
+
+        .chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+        }
+
+        /* --- ag-chat-root Styles (Sync with app_multi.js) --- */
+        #ag-chat-root {
+            background-color: transparent !important;
+            color: var(--text-main) !important;
+            position: relative !important;
+            height: auto !important;
+            width: 100% !important;
+        }
+
+        #ag-chat-root p,
+        #ag-chat-root h1,
+        #ag-chat-root h2,
+        #ag-chat-root h3,
+        #ag-chat-root h4,
+        #ag-chat-root h5,
+        #ag-chat-root span,
+        #ag-chat-root div,
+        #ag-chat-root li {
+            color: inherit !important;
+        }
+
+        #ag-chat-root [contenteditable="true"],
+        #ag-chat-root [data-lexical-editor="true"],
+        #ag-chat-root textarea:not(#messageInput) {
+            display: none !important;
+        }
+
+        /* --- Force Split View Visibility --- */
+        #ag-chat-root .split-view-container,
+        #ag-chat-root .split-view-view {
+            position: relative !important;
+            display: block !important;
+            height: auto !important;
+            width: 100% !important;
+            left: auto !important;
+            top: auto !important;
+            transform: none !important;
+            opacity: 1 !important;
+            visibility: visible !important;
+        }
+
+        /* --- Hide Workbench Artifacts (Noise Suppression) --- */
+        #ag-chat-root footer,
+        #ag-chat-root .statusbar,
+        #ag-chat-root [class*="titlebar"],
+        #ag-chat-root [class*="activitybar"],
+        #ag-chat-root [class*="sidebar"],
+        #ag-chat-root [class*="auxiliarybar"],
+        #ag-chat-root [class*="banner"],
+        #ag-chat-root [class*="terminal"],
+        #ag-chat-root .action-item,
+        #ag-chat-root .action-label,
+        #ag-chat-root [aria-label*="Ask anything"],
+        #ag-chat-root [aria-label*="mention"],
+        #ag-chat-root p[class*="pointer-events-none"],
+        #ag-chat-root .monaco-alert,
+        #ag-chat-root .monaco-aria-container {
+            display: none !important;
+        }
+
+        .input-section {
+            padding: 10px;
+            border-top: 1px solid var(--border-color);
+            background: #1e293b;
+        }
+
+        .input-wrapper {
+            display: flex;
+            gap: 8px;
+        }
+
+        textarea {
+            flex: 1;
+            background: #0f172a;
+            border: 1px solid var(--border-color);
+            color: white;
+            border-radius: 4px;
+            padding: 8px;
+        }
+
+        button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="v3-badge">VERSION 3.0 (PRECISE)</div>
+    <header class="header">
+        <h1>Antigravity V3 - Layout Fix</h1>
+        <div class="header-controls">
+            <div class="status-badge"><span id="statusText">...</span></div>
+        </div>
+    </header>
+    <div class="chat-container" id="chatContainer">
+        <div class="chat-content" id="chatContent">
+            <div class="loading-state">
+                <p>Checking Layout Probing Tool...</p>
+            </div>
+        </div>
+    </div>
+    <div class="input-section">
+        <div class="input-wrapper">
+            <textarea id="messageInput" placeholder="Message V3..."></textarea>
+            <button class="send-btn" id="sendBtn">Send</button>
+        </div>
+    </div>
+    <script src="js/app_v3.js"></script>
+</body>
+
+</html>
