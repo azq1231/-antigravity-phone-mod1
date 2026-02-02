@@ -672,7 +672,15 @@ async function getAppState(cdp) {
                 if (state.mode !== 'Unknown') break;
             }
             const textNodes = allEls.filter(el => el.children.length === 0 && el.innerText);
-            const modelEl = textNodes.find(el => ["Gemini", "Claude", "GPT"].some(k => el.innerText.includes(k)) && el.closest('button')?.querySelector('svg.lucide-chevron-up'));
+            // 改進偵測邏輯：擴充型號關鍵字並支援狀態列
+            const modelEl = textNodes.find(el => {
+                const text = el.innerText;
+                const matches = ["Gemini", "Claude", "GPT", "Grok", "o1", "Sonnet", "Opus"].some(k => text.includes(k));
+                if (!matches) return false;
+                
+                // 檢查是否在按鈕內、狀態列中或具備連結屬性
+                return el.closest('button') || el.closest('[class*="statusbar-item"]') || el.closest('a');
+            });
             if (modelEl) state.model = modelEl.innerText.trim();
             return state;
         } catch(e) { return { error: e.toString() }; }

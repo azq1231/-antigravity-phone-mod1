@@ -488,9 +488,31 @@ textarea::-webkit-scrollbar {
     max-width: 500px;
     border-radius: 20px 20px 0 0;
     padding: 20px;
+    display: flex;
+    flex-direction: column;
     animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     max-height: 80vh;
     overflow-y: auto;
+}
+
+.modal-close-btn {
+    margin-top: 20px;
+    padding: 12px;
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    align-self: center;
+    width: 100px;
+}
+
+.modal-close-btn:active {
+    background: rgba(255, 255, 255, 0.05);
+    transform: scale(0.95);
 }
 
 @keyframes slideUp {
@@ -589,11 +611,11 @@ textarea::-webkit-scrollbar {
 .slot-title {
     font-weight: 600;
     color: var(--text-main);
-    font-size: 14px;
+    font-size: 13px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 140px;
+    max-width: 180px;
 }
 
 .slot-status {

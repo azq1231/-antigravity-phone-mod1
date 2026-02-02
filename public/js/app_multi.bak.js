@@ -20,7 +20,6 @@ const modelText = document.getElementById('modelText');
 // --- State ---
 let autoRefreshEnabled = true;
 let userIsScrolling = false;
-let userIsTyping = false;
 let userScrollLockUntil = 0; // Timestamp until which we respect user scroll
 let lastScrollPosition = 0;
 let ws = null;
@@ -29,8 +28,6 @@ let lastHash = '';
 let currentMode = 'Fast';
 let pingTimeout = null;
 let pongReceived = false;
-let forceScrollToBottom = false; // V4: Force scroll after send
-let firstLoadPorts = new Set();  // V4: Track first load per port
 
 // Load last viewed port from storage, default to 9000
 let currentViewingPort = parseInt(localStorage.getItem('lastViewingPort')) || 9000;
@@ -77,7 +74,7 @@ async function fetchAppState() {
         // Active Port Sync - In multi-session, we trust our local selection
         instanceText.textContent = `Port ${currentViewingPort}`;
 
-        console.log(`[SYNC] State updated for Port ${currentViewingPort}:`, data);
+        console.log('[SYNC] State refreshed for Port:', currentViewingPort);
     } catch (e) { console.error('[SYNC] Failed to sync state', e); }
 }
 
@@ -165,7 +162,7 @@ function connectWebSocket() {
         }
 
         // V2: Receive snapshot data directly via WebSocket broadcast
-        if (data.type === 'snapshot_update' && autoRefreshEnabled && !userIsScrolling && !userIsTyping) {
+        if (data.type === 'snapshot_update' && autoRefreshEnabled && !userIsScrolling) {
             if (data.port) {
                 currentViewingPort = data.port;
                 const name = cleanInstanceName(data);
@@ -308,85 +305,24 @@ function renderSnapshot(data, force = false) {
             '    --border-color: #334155;\n' +
             '}\n' +
             '\n' +
-            '#ag-chat-root, #cascade {\n' +
+            '#cascade {\n' +
             '    background-color: transparent !important;\n' +
             '    color: var(--text-main) !important;\n' +
             '    font-family: \'Inter\', system-ui, sans-serif !important;\n' +
             '    position: relative !important;\n' +
             '    height: auto !important;\n' +
             '    width: 100% !important;\n' +
-            '    min-height: 100px !important;\n' +
             '}\n' +
             '\n' +
-            '#ag-chat-root *, #cascade * {\n' +
+            '#cascade * {\n' +
             '    position: static !important;\n' +
             '}\n' +
             '\n' +
-            '#ag-chat-root [contenteditable="true"], \n' +
-            '#ag-chat-root [data-lexical-editor="true"],\n' +
-            '#ag-chat-root textarea:not(#messageInput),\n' +
-            '#cascade [contenteditable="true"], \n' +
-            '#cascade [data-lexical-editor="true"],\n' +
-            '#cascade textarea:not(#messageInput) {\n' +
-            '    display: none !important;\n' +
-            '}\n' +
-            '\n' +
-            '/* --- Force Split View Visibility --- */\n' +
-            '#ag-chat-root .split-view-container,\n' +
-            '#ag-chat-root .split-view-view,\n' +
-            '#cascade .split-view-container,\n' +
-            '#cascade .split-view-view {\n' +
-            '    position: relative !important;\n' +
-            '    display: block !important;\n' +
-            '    height: auto !important;\n' +
-            '    width: 100% !important;\n' +
-            '    left: auto !important;\n' +
-            '    top: auto !important;\n' +
-            '    transform: none !important;\n' +
-            '    opacity: 1 !important;\n' +
-            '    visibility: visible !important;\n' +
-            '}\n' +
-            '\n' +
-            '/* --- Hide Workbench Artifacts --- */\n' +
-            '#ag-chat-root footer,\n' +
-            '#ag-chat-root .statusbar,\n' +
-            '#ag-chat-root [class*="titlebar"],\n' +
-            '#ag-chat-root [class*="activitybar"],\n' +
-            '#ag-chat-root [class*="sidebar"],\n' +
-            '#ag-chat-root [class*="auxiliarybar"],\n' +
-            '#ag-chat-root [class*="banner"],\n' +
-            '#ag-chat-root [class*="terminal"],\n' +
-            '#ag-chat-root .action-item,\n' +
-            '#ag-chat-root .action-label,\n' +
-            '#ag-chat-root [aria-label*="Ask anything"],\n' +
-            '#ag-chat-root [aria-label*="mention"],\n' +
-            '#ag-chat-root p[class*="pointer-events-none"],\n' +
-            '#ag-chat-root .monaco-alert,\n' +
-            '#ag-chat-root .monaco-aria-container,\n' +
-            '#cascade footer,\n' +
-            '#cascade .statusbar,\n' +
-            '#cascade [class*="titlebar"],\n' +
-            '#cascade [class*="activitybar"],\n' +
-            '#cascade [class*="sidebar"],\n' +
-            '#cascade [class*="auxiliarybar"],\n' +
-            '#cascade [class*="banner"],\n' +
-            '#cascade [class*="terminal"],\n' +
-            '#cascade .action-item,\n' +
-            '#cascade .action-label,\n' +
-            '#cascade [aria-label*="Ask anything"],\n' +
-            '#cascade [aria-label*="mention"],\n' +
-            '#cascade p[class*="pointer-events-none"],\n' +
-            '#cascade .monaco-alert,\n' +
-            '#cascade .monaco-aria-container {\n' +
-            '    display: none !important;\n' +
-            '}\n' +
-            '\n' +
-            '#ag-chat-root p, #ag-chat-root h1, #ag-chat-root h2, #ag-chat-root h3, #ag-chat-root h4, #ag-chat-root h5, #ag-chat-root span, #ag-chat-root div, #ag-chat-root li, \n' +
             '#cascade p, #cascade h1, #cascade h2, #cascade h3, #cascade h4, #cascade h5, #cascade span, #cascade div, #cascade li {\n' +
-            '    color: #e2e8f0 !important; /* 強制亮白色 */\n' +
+            '    color: inherit !important;\n' +
             '}\n' +
             '\n' +
-            '#ag-chat-root a, #cascade a {\n' +
+            '#cascade a {\n' +
             '    color: #60a5fa !important;\n' +
             '    text-decoration: underline;\n' +
             '}\n' +
@@ -506,50 +442,33 @@ function renderSnapshot(data, force = false) {
             '}\n' +
             '\n' +
             '::-webkit-scrollbar {\n' +
-            '    width: 6px !important;\n' +
-            '    height: 6px !important;\n' +
-            '}\n' +
-            '::-webkit-scrollbar-track {\n' +
-            '    background: transparent !important;\n' +
-            '}\n' +
-            '::-webkit-scrollbar-thumb {\n' +
-            '    background: #334155 !important;\n' +
-            '    border-radius: 10px !important;\n' +
-            '}\n' +
-            '::-webkit-scrollbar-thumb:hover {\n' +
-            '    background: #475569 !important;\n' +
+            '    width: 0 !important;\n' +
             '}\n' +
             '                \n' +
             '[style*=\"background-color: rgb(255, 255, 255)\"],\n' +
             '[style*=\"background-color: white\"],\n' +
-            '[style*=\"background: white\"],\n' +
-            '[style*=\"background:white\"],\n' +
-            '[style*=\"background-color:white\"] {\n' +
+            '[style*=\"background: white\"] {\n' +
             '    background-color: transparent !important;\n' +
             '}';
         styleTag.textContent = darkModeOverrides + (data.css_extra || '');
         // --- RENDER HTML ---
-        // V4: Add a hint at the top if there might be virtualized content above
-        const historyHint = `<div style="text-align:center; padding:10px; font-size:11px; color:var(--text-muted); opacity:0.5; border-bottom:1px solid var(--border); margin-bottm:10px;">向上滑動電腦版可看更多歷史紀錄 / Scroll up on PC for more history</div>`;
-        chatContent.innerHTML = historyHint + data.html;
+        chatContent.innerHTML = data.html;
 
         // --- POST-RENDER PROCESS ---
         addMobileCopyButtons();
 
         // Smart scroll behavior: respect user scroll, only auto-scroll when appropriate
-        const isFirstLoad = !firstLoadPorts.has(currentViewingPort);
-        if (isFirstLoad) firstLoadPorts.add(currentViewingPort);
-
-        if (forceScrollToBottom || isFirstLoad) {
-            scrollToBottom();
-            forceScrollToBottom = false;
-        } else if (isUserScrollLocked) {
+        if (isUserScrollLocked) {
+            // User recently scrolled - try to maintain their approximate position
+            // Use percentage-based restoration for better accuracy
             const scrollPercent = scrollHeight > 0 ? scrollPos / scrollHeight : 0;
             const newScrollPos = chatContainer.scrollHeight * scrollPercent;
             chatContainer.scrollTop = newScrollPos;
         } else if (isNearBottom || scrollPos === 0) {
+            // User was at bottom or hasn't scrolled - auto scroll to bottom
             scrollToBottom();
         } else {
+            // Preserve exact scroll position
             chatContainer.scrollTop = scrollPos;
         }
 
@@ -742,32 +661,22 @@ function scrollToBottom() {
     });
 }
 
-// --- State ---
-let isSending = false;
-
 // --- Inputs ---
-async function sendMessage(retryCount = 0, originalHTML = null) {
-    if (typeof retryCount !== 'number') retryCount = 0;
-
-    if (isSending && retryCount === 0) return;
-
+async function sendMessage(retryCount = 0) {
     const message = messageInput.value.trim();
     if (!message) return;
 
-    if (retryCount === 0) isSending = true;
-    const originalBtnHTML = originalHTML || sendBtn.innerHTML;
+    // UI Feedback: Loading state
+    const originalBtnHTML = sendBtn.innerHTML;
+    sendBtn.disabled = true;
+    sendBtn.innerHTML = '<div class="loading-spinner-s"></div>';
+    sendBtn.style.opacity = '0.8';
+
+    // Prepare for potential error
+    const previousValue = messageInput.value;
+    messageInput.blur();
 
     try {
-        sendBtn.disabled = true;
-        if (retryCount === 0) {
-            sendBtn.innerHTML = '<div class="loading-spinner-s"></div>';
-            messageInput.blur();
-        } else {
-            // Updated UI: More descriptive than "Retrying"
-            sendBtn.innerHTML = `<div style="font-size: 10px; line-height: 1.2;">AI 思考中...<br>(${retryCount}/25)</div>`;
-        }
-        sendBtn.style.opacity = '0.8';
-
         const res = await fetchWithAuth(`/send?port=${currentViewingPort}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -775,72 +684,82 @@ async function sendMessage(retryCount = 0, originalHTML = null) {
         });
 
         const data = await res.json();
+        console.log('[SEND] Result:', data);
 
         if (res.ok && data.ok) {
+            // SUCCESS: Clear input
             messageInput.value = '';
             messageInput.style.height = 'auto';
             const wrapper = messageInput.closest('.input-wrapper');
             if (wrapper) wrapper.classList.remove('input-error');
 
-            setTimeout(loadSnapshot, 100);
+            // Visual feedback
             setTimeout(loadSnapshot, 300);
             setTimeout(loadSnapshot, 1000);
-            setTimeout(loadSnapshot, 3000);
-            forceScrollToBottom = true;
-            return true;
-        }
 
-        // Increased Retry Limit to 25 (approx 150 seconds total)
-        const shouldRetry = (data?.reason === "busy" || data?.error === "editor_not_found") && retryCount < 25;
-        if (shouldRetry) {
-            // Exponential backoff, capping at 6 seconds
-            const delay = Math.min(2000 * Math.pow(1.2, retryCount), 6000);
-            await new Promise(r => setTimeout(r, delay));
-            return await sendMessage(retryCount + 1, originalBtnHTML);
-        }
-
-        // OPTIMISTIC CLEAR: If we got a response but it's not retryable,
-        // clear the input anyway (message likely sent despite error response)
-        console.warn('[SEND] Non-retryable response, clearing input optimistically:', data);
-        messageInput.value = '';
-        messageInput.style.height = 'auto';
-
-        throw new Error(data?.reason || data?.error || 'Send failed');
-
-    } catch (e) {
-        console.error('[SEND] Error:', e.message);
-        const wrapper = messageInput.closest('.input-wrapper');
-        if (wrapper) {
-            wrapper.classList.add('input-error');
-            setTimeout(() => wrapper.classList.remove('input-error'), 3000);
-        }
-        if (e.message.includes('editor_not_found')) loadSnapshot();
-        return false;
-
-    } finally {
-        if (retryCount === 0) {
-            isSending = false;
+            // Re-enable button
             sendBtn.disabled = false;
             sendBtn.innerHTML = originalBtnHTML;
             sendBtn.style.opacity = '1';
+        } else {
+            // Check if we should retry
+            const shouldRetry = (data?.reason === "busy" || data?.error === "editor_not_found") && retryCount < 5;
+
+            if (shouldRetry) {
+                // Auto-retry with exponential backoff (longer delays)
+                const delay = Math.min(3000 * Math.pow(1.3, retryCount), 8000); // 3s, 3.9s, 5s, 6.5s, 8s
+                console.warn(`[SEND] ${data?.reason || data?.error}, retrying in ${delay}ms... (attempt ${retryCount + 1}/5)`);
+
+                // Show retry progress on button
+                sendBtn.innerHTML = `<div style="font-size: 12px;">重試中 ${retryCount + 1}/5</div>`;
+
+                await new Promise(r => setTimeout(r, delay));
+                // Await the retry so success handling propagates correctly
+                await sendMessage(retryCount + 1);
+                return; // Exit after retry completes
+            } else {
+                // FAILURE: Show red error after all retries exhausted
+                console.error('[SEND] Server reported failure after retries:', data);
+                const wrapper = messageInput.closest('.input-wrapper');
+                if (wrapper) {
+                    wrapper.classList.add('input-error');
+                    setTimeout(() => wrapper.classList.remove('input-error'), 3000);
+                }
+
+                if (data?.error === "editor_not_found" || data?.reason === "no_context") {
+                    console.warn('[SEND] Context or Editor error, refreshing...');
+                    loadSnapshot();
+                }
+
+                // Re-enable button
+                sendBtn.disabled = false;
+                sendBtn.innerHTML = originalBtnHTML;
+                sendBtn.style.opacity = '1';
+            }
         }
+
+    } catch (e) {
+        console.error('[SEND] Network or parsing error:', e);
+        const wrapper = messageInput.closest('.input-wrapper');
+        if (wrapper) {
+            wrapper.classList.add('input-error');
+            setTimeout(() => wrapper.classList.remove('input-error'), 2000);
+        }
+
+        // Re-enable button
+        sendBtn.disabled = false;
+        sendBtn.innerHTML = originalBtnHTML;
+        sendBtn.style.opacity = '1';
     }
 }
-
-function quickAction(text) {
-    if (isSending) return;
-    messageInput.value = text;
-    messageInput.dispatchEvent(new Event('input'));
-    sendMessage();
-}
-window.quickAction = quickAction;
 
 // --- Event Listeners ---
 sendBtn.addEventListener('click', sendMessage);
 
 refreshBtn.addEventListener('click', () => {
+    // Refresh both Chat and State (Mode/Model)
     loadSnapshot();
-    fetchAppState();
+    fetchAppState(); // PRIORITY: Sync from Desktop
 });
 
 messageInput.addEventListener('keydown', (e) => {
@@ -850,17 +769,7 @@ messageInput.addEventListener('keydown', (e) => {
     }
 });
 
-messageInput.addEventListener('focus', () => {
-    userIsTyping = true;
-});
-
-messageInput.addEventListener('blur', () => {
-    // Delay resetting typing flag to allow for click events on send button
-    setTimeout(() => { userIsTyping = false; }, 500);
-});
-
 messageInput.addEventListener('input', function () {
-    userIsTyping = true;
     this.style.height = 'auto';
     this.style.height = (this.scrollHeight) + 'px';
 });
@@ -1069,9 +978,7 @@ async function handleSlotAction(action, port) {
         currentViewingPort = port;
         localStorage.setItem('lastViewingPort', port);
 
-        // V4: Reset first load state for this port so it scrolls to bottom once re-connected
-        firstLoadPorts.delete(port);
-        lastHash = '';
+        // 2. Clear content and show loading so user knows a switch is in progress
         chatContent.innerHTML = `
             <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; color:var(--text-muted); padding:40px; text-align:center;">
                 <div class="loading-spinner" style="margin-bottom:20px;"></div>
