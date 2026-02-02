@@ -278,15 +278,36 @@ async function injectMessage(cdp, text, force = false) {
         await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
         
         // [V3 Logic] Click submit or Enter
-        const submit = document.querySelector("svg.lucide-arrow-right, .lucide-send, button[aria-label*='Send']")?.closest("button");
-        if (submit && !submit.disabled) {
-            // Async click to ensure we return success to CDP before any page navigation/updates kill the context
-            setTimeout(() => submit.click(), 0); 
-            return { ok: true, method: "click_async" };
-        }
+        // [V3 Logic] Click submit or Enter - MODIFIED: Prefer Enter to avoid "Continue" trap
         
-        editor.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter", code: "Enter", keyCode: 13, which: 13 }));
-        return { ok: true, method: "enter" };
+        // 1. Try to find the button just to check if it's a "Continue" button
+        const submit = document.querySelector("svg.lucide-arrow-right, .lucide-send, button[aria-label*='Send']")?.closest("button");
+        
+        const isContinue = submit && (
+            submit.textContent?.toLowerCase().includes('continue') || 
+            submit.getAttribute('aria-label')?.toLowerCase().includes('continue') ||
+            submit.title?.toLowerCase().includes('continue')
+        );
+
+        // 2. If it looks like a Continue button, OR if we just want to be safe, use Enter.
+        // We only click if we are sure it's NOT continue, or if Enter is known to fail (rare).
+        // For V4 Stable, Enter is the safest default for "Text" input.
+        
+        if (!isContinue) {
+             // Dispatch Enter first
+             editor.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter", code: "Enter", keyCode: 13, which: 13 }));
+             
+             // Fallback: If button exists and is valid send button, click it async just in case Enter didn't work?
+             // No, double sending is bad. Let's trust Enter.
+             // BUT, if the button is explicitly "Send", clicking is also fine.
+             // The issue is distinguishing "Send" from "Continue" when they share icons/classes.
+             
+             return { ok: true, method: "enter_priority" };
+        } else {
+             // If it IS continue, DEFINITELY use Enter to send text
+             editor.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter", code: "Enter", keyCode: 13, which: 13 }));
+             return { ok: true, method: "enter_forced_avoid_continue" };
+        }
     })()`;
 
     let lastError = { ok: false, reason: "no_context" };
