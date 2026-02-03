@@ -38,6 +38,7 @@ const activeConnections = new Map();
 const connectionLocks = new Map();
 const snapshotCache = new Map();
 const runningProcesses = new Map(); // port -> child_process
+let tickCount = 0; // Move to global for easier logging access
 
 // --- Instance Management (Spawn/Kill) ---
 async function spawnInstance(port) {
@@ -124,14 +125,34 @@ async function findAllInstances() {
         try {
             const inUse = await isPortInUse(port);
             if (!inUse) continue;
-            const list = await getJson(`http://127.0.0.1:${port}/json/list`);
-            let candidate = list.find(t => t.url?.includes('workbench.html'));
-            if (!candidate) candidate = list.find(t => t.type === 'page' && t.webSocketDebuggerUrl);
-            if (candidate && candidate.webSocketDebuggerUrl) {
+            const list = await getJson(`http://127.0.0.1:${port}/json`);
+            // DETAILED LOGGING: Reveal all targets
+            console.log(`[V4-DISCOVERY] Port ${port} found ${list.length} targets`);
+
+            // DETAILED LOGGING: Reveal all targets
+            console.log(`[V4-DISCOVERY] Port ${port} found ${list.length} targets`);
+            list.forEach(t => console.log(`  - [${t.type}] Title: "${t.title}" | WS: ${t.webSocketDebuggerUrl ? 'YES' : 'NO'} | URL: ${t.url?.substring(0, 60)}`));
+
+            const pages = list.filter(t => (t.type === 'page' || t.type === 'webview') && t.webSocketDebuggerUrl);
+
+            if (pages.length > 0) {
+                // V4 Logic: Prioritize real workbench/chat targets over Launchpad
+                const mainTarget = pages.find(t => t.title && t.title.toLowerCase().includes('antigravity')) ||
+                    pages.find(t => t.url && t.url.includes('workbench.html')) ||
+                    // Pick the first target that is NOT Launchpad/Walkthrough
+                    pages.find(t => t.title && !t.title.includes('Launchpad') && !t.title.includes('Walkthrough')) ||
+                    // Pick the first target that has an EMPTY title (often the workbench itself)
+                    pages.find(t => t.title === "") ||
+                    pages[0];
+
                 instances.push({
                     port,
-                    url: candidate.webSocketDebuggerUrl,
-                    title: candidate.title || `Antigravity (${port})`
+                    targets: pages.map(t => ({
+                        url: t.webSocketDebuggerUrl,
+                        id: t.id,
+                        title: t.title || `Untitled Target (${t.id.substring(0, 4)})`
+                    })),
+                    title: (mainTarget.title && mainTarget.title !== "Launchpad") ? mainTarget.title : `Antigravity (Port ${port})`
                 });
             }
         } catch (e) { }
@@ -157,7 +178,10 @@ async function connectCDP(url) {
                 clearTimeout(timeoutId); pendingCalls.delete(data.id);
                 if (data.error) reject(data.error); else resolve(data.result);
             }
-            if (data.method === 'Runtime.executionContextCreated') contexts.push(data.params.context);
+            if (data.method === 'Runtime.executionContextCreated') {
+                contexts.push(data.params.context);
+                console.log(`[V4-CDP] Context created on ${url.substring(url.length - 10)}: ${data.params.context.id} (${data.params.context.name || 'main'})`);
+            }
             if (data.method === 'Runtime.executionContextsCleared') contexts.length = 0;
         } catch (e) { }
     });
@@ -173,20 +197,39 @@ async function connectCDP(url) {
 
 async function getOrConnectParams(port, forceReconnect = false) {
     if (activeConnections.has(port) && !forceReconnect) {
-        const conn = activeConnections.get(port);
-        if (conn.ws.readyState === WebSocket.OPEN) return conn;
+        const conns = activeConnections.get(port);
+        // Ensure all connections are still open, or prune them
+        const valid = conns.filter(c => c.ws.readyState === WebSocket.OPEN);
+        if (valid.length > 0) {
+            activeConnections.set(port, valid);
+            return valid;
+        }
         activeConnections.delete(port);
     }
+
     if (connectionLocks.has(port)) return connectionLocks.get(port);
+
     const promise = (async () => {
         try {
             const instances = await findAllInstances();
-            const target = instances.find(i => i.port === port);
-            if (!target) throw new Error(`Port ${port} not found`);
-            const conn = await connectCDP(target.url);
-            conn.port = port; conn.title = target.title;
-            activeConnections.set(port, conn);
-            return conn;
+            const inst = instances.find(i => i.port === port);
+            if (!inst) throw new Error(`Port ${port} not found`);
+
+            const results = [];
+            for (const target of inst.targets) {
+                try {
+                    const conn = await connectCDP(target.url);
+                    conn.port = port;
+                    conn.title = target.title;
+                    results.push(conn);
+                    console.log(`[V4-CDP] Connected to Target: "${conn.title}" on Port ${port} (Total Contexts: ${conn.contexts.length})`);
+                } catch (e) {
+                    console.error(`[V4-CDP] Failed to connect to "${target.title}":`, e.message);
+                }
+            }
+            if (!results.length) throw new Error('Failed to connect to any target');
+            activeConnections.set(port, results);
+            return results;
         } finally { connectionLocks.delete(port); }
     })();
     connectionLocks.set(port, promise);
@@ -205,17 +248,23 @@ function simpleHash(str) {
     return hash.toString(16);
 }
 
-// 1. Snapshot: Uses Multi's stable display logic (Strict #cascade)
-async function captureSnapshot(cdp) {
+// 1. Snapshot: Iterates multiple targets to find the chat panel
+// 1. Snapshot: Iterates multiple targets to find the chat panel
+async function captureSnapshot(cdpList) {
     const CAPTURE_SCRIPT = `(() => {
-        const cascade = document.getElementById('cascade');
-        if (!cascade) return { error: 'cascade not found' };
+        const cascade = document.getElementById('cascade') || document.querySelector('[class*="cascade"]');
+        if (!cascade) {
+            const iframes = document.querySelectorAll('iframe').length;
+            const webviews = document.querySelectorAll('webview').length;
+            const bodyPreview = document.body?.innerText?.substring(0, 50) || 'empty';
+            return { error: 'cascade not found', body: bodyPreview + ' | iframes: ' + iframes + ' | webviews: ' + webviews };
+        }
         
-        // Multi's cleaning logic
+        // Safe Cleaning Logic (Matches V3/V2 - Non-destructive)
         const clone = cascade.cloneNode(true);
         const inputContainer = clone.querySelector('[contenteditable="true"]')?.closest('div[id^="cascade"] > div');
         if (inputContainer) inputContainer.remove();
-        
+
         const html = clone.outerHTML;
         const scrollContainer = cascade.querySelector('.overflow-y-auto, [data-scroll-area]') || cascade;
         const scrollInfo = {
@@ -226,7 +275,10 @@ async function captureSnapshot(cdp) {
 
         const rules = [];
         for (const sheet of document.styleSheets) {
-            try { for (const rule of sheet.cssRules) rules.push(rule.cssText); } catch (e) { }
+            try { 
+                const cssText = Array.from(sheet.cssRules).map(r => r.cssText).join('\\n');
+                rules.push(cssText);
+            } catch (e) { }
         }
         
         const rewriteUrl = (s) => s ? s.replace(/vscode-file:\\/\\/vscode-app\\/.*?\\/resources\\/app\\//g, '/vscode-resources/') : s;
@@ -237,26 +289,37 @@ async function captureSnapshot(cdp) {
             scrollInfo: scrollInfo
         };
     })()`;
-    for (const ctx of cdp.contexts) {
-        try {
-            const result = await cdp.call("Runtime.evaluate", { expression: CAPTURE_SCRIPT, returnByValue: true, contextId: ctx.id });
-            if (result.result?.value && !result.result.value.error) {
-                const val = result.result.value;
-                val.hash = simpleHash(val.html + (val.scrollInfo?.scrollTop || 0));
-                return val;
+
+    for (const cdp of cdpList) {
+        for (const ctx of cdp.contexts) {
+            try {
+                const result = await cdp.call("Runtime.evaluate", { expression: CAPTURE_SCRIPT, returnByValue: true, contextId: ctx.id });
+                if (result.result?.value) {
+                    if (!result.result.value.error) {
+                        const val = result.result.value;
+                        val.hash = simpleHash(val.html + (val.scrollInfo?.scrollTop || 0));
+                        val.targetTitle = cdp.title;
+                        return val;
+                    } else {
+                        // LOG EVERYTHING for diagnosis
+                        console.log(`[V4-SNAPSHOT] Port ${cdp.port} Target "${cdp.title}" Ctx ${ctx.id}: ${result.result.value.error} | Content: ${result.result.value.body || 'N/A'}`);
+                    }
+                }
+            } catch (e) {
+                console.error(`[V4-SNAPSHOT] Port ${cdp.port} Ctx ${ctx.id} exception:`, e.message);
             }
-        } catch (e) { }
+        }
     }
     return null;
 }
 
-// 2. Inject: Uses V3's Robust Input Logic (Loose selectors, Busy detection)
-async function injectMessage(cdp, text, force = false) {
+// 2. Inject: Robust Input Logic
+async function injectMessage(cdpList, text, force = false) {
     const safeText = JSON.stringify(text);
     const EXPRESSION = `(async () => {
         // [V3 Logic] Precise busy detection
         const cancel = document.querySelector('button[data-tooltip-id="input-send-button-cancel-tooltip"]');
-        const stopBtn = document.querySelector('button svg.lucide-square, button svg.lucide-circle-stop')?.closest('button');
+        const stopBtn = document.querySelector('button svg.lucide-square, svg.lucide-circle-stop')?.closest('button');
         const busyEl = cancel || stopBtn;
         
         // Return busy unless forced
@@ -277,66 +340,56 @@ async function injectMessage(cdp, text, force = false) {
 
         await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
         
-        // [V3 Logic] Click submit or Enter
-        // [V3 Logic] Click submit or Enter - MODIFIED: Prefer Enter to avoid "Continue" trap
+        // [V4 Hotfix] Find Submit button while strictly avoiding "Continue" or "Stop" system buttons
+        const allButtons = Array.from(document.querySelectorAll('button, [role="button"], a.button'));
+        const isActuallySend = (b) => {
+            const label = (b.innerText + ' ' + (b.getAttribute('aria-label') || '') + ' ' + (b.title || '')).toLowerCase();
+            if (label.includes('continue') || label.includes('繼續') || label.includes('stop') || label.includes('停止')) return false;
+            return label.includes('send') || label.includes('submit') || label.includes('發送') || b.querySelector('svg.lucide-arrow-right, .lucide-send');
+        };
         
-        // 1. Try to find the button just to check if it's a "Continue" button
-        const submit = document.querySelector("svg.lucide-arrow-right, .lucide-send, button[aria-label*='Send']")?.closest("button");
+        const submit = allButtons.find(isActuallySend);
         
-        const isContinue = submit && (
-            submit.textContent?.toLowerCase().includes('continue') || 
-            submit.getAttribute('aria-label')?.toLowerCase().includes('continue') ||
-            submit.title?.toLowerCase().includes('continue')
-        );
-
-        // 2. If it looks like a Continue button, OR if we just want to be safe, use Enter.
-        // We only click if we are sure it's NOT continue, or if Enter is known to fail (rare).
-        // For V4 Stable, Enter is the safest default for "Text" input.
-        
-        if (!isContinue) {
-             // Dispatch Enter first
-             editor.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter", code: "Enter", keyCode: 13, which: 13 }));
-             
-             // Fallback: If button exists and is valid send button, click it async just in case Enter didn't work?
-             // No, double sending is bad. Let's trust Enter.
-             // BUT, if the button is explicitly "Send", clicking is also fine.
-             // The issue is distinguishing "Send" from "Continue" when they share icons/classes.
-             
-             return { ok: true, method: "enter_priority" };
+        if (submit && submit.offsetParent !== null) {
+             // Only click if it's visible and safe
+             setTimeout(() => submit.click(), 50);
+             return { ok: true, method: "click_verified_send" };
         } else {
-             // If it IS continue, DEFINITELY use Enter to send text
+             // Safe fallback for text chats
              editor.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter", code: "Enter", keyCode: 13, which: 13 }));
-             return { ok: true, method: "enter_forced_avoid_continue" };
+             return { ok: true, method: "enter_safe_fallback" };
         }
     })()`;
 
     let lastError = { ok: false, reason: "no_context" };
-    for (const ctx of cdp.contexts) {
-        try {
-            const res = await cdp.call("Runtime.evaluate", { expression: EXPRESSION, returnByValue: true, awaitPromise: true, contextId: ctx.id });
-            const val = res.result?.value;
+    for (const cdp of cdpList) {
+        for (const ctx of cdp.contexts) {
+            try {
+                const res = await cdp.call("Runtime.evaluate", { expression: EXPRESSION, returnByValue: true, awaitPromise: true, contextId: ctx.id });
+                const val = res.result?.value;
 
-            if (val) {
-                if (val.ok) {
-                    console.log(`[INJECT] Port ${cdp.port} success via context ${ctx.id}:`, val);
-                    return val;
+                if (val) {
+                    if (val.ok) {
+                        console.log(`[INJECT] Port ${cdp.port} success via context ${ctx.id}:`, val);
+                        return val;
+                    }
+                    // If busy, it means we FOUND the cancel button, so we are in the right context but it is busy!
+                    if (val.reason === 'busy') {
+                        console.log(`[INJECT] Port ${cdp.port} busy via context ${ctx.id}`);
+                        return val;
+                    }
+                    lastError = val;
                 }
-                // If busy, it means we FOUND the cancel button, so we are in the right context but it is busy!
-                if (val.reason === 'busy') {
-                    console.log(`[INJECT] Port ${cdp.port} busy via context ${ctx.id}`);
-                    return val;
-                }
-                lastError = val;
+            } catch (e) {
+                console.error(`[INJECT] Port ${cdp.port} context ${ctx.id} error:`, e.message);
             }
-        } catch (e) {
-            console.error(`[INJECT] Port ${cdp.port} context ${ctx.id} error:`, e.message);
         }
     }
-    console.warn(`[INJECT] Port ${cdp.port} tried all contexts. Last result:`, lastError);
+    console.warn(`[INJECT] Tried all contexts for all targets. Last result:`, lastError);
     return lastError;
 }
 
-async function getAppState(cdp) {
+async function getAppState(cdpList) {
     // Uses the improved detection from server_multi.js
     const EXP = `(async () => {
         try {
@@ -354,17 +407,19 @@ async function getAppState(cdp) {
             return state;
         } catch(e) { return { error: e.toString() }; }
     })()`;
-    for (const ctx of cdp.contexts) {
-        try {
-            const res = await cdp.call("Runtime.evaluate", { expression: EXP, returnByValue: true, awaitPromise: true, contextId: ctx.id });
-            if (res.result?.value) return res.result.value;
-        } catch (e) { }
+    for (const cdp of cdpList) {
+        for (const ctx of cdp.contexts) {
+            try {
+                const res = await cdp.call("Runtime.evaluate", { expression: EXP, returnByValue: true, awaitPromise: true, contextId: ctx.id });
+                if (res.result?.value && !res.result.value.error && res.result.value.mode !== 'Unknown') return res.result.value;
+            } catch (e) { }
+        }
     }
-    return { error: 'Context failed' };
+    return { mode: 'Unknown', model: 'Unknown', error: 'Context failed or state not found' };
 }
 
 // 4. Set Mode (Fast/Planning)
-async function setMode(cdp, mode) {
+async function setMode(cdpList, mode) {
     if (!['Fast', 'Planning'].includes(mode)) return { error: 'Invalid mode' };
     const EXP = `(async () => {
         try {
@@ -406,17 +461,19 @@ async function setMode(cdp, mode) {
         } catch(err) { return { error: err.toString() }; }
     })()`;
 
-    for (const ctx of cdp.contexts) {
-        try {
-            const res = await cdp.call("Runtime.evaluate", { expression: EXP, returnByValue: true, awaitPromise: true, contextId: ctx.id });
-            if (res.result?.value) return res.result.value;
-        } catch (e) { }
+    for (const cdp of cdpList) {
+        for (const ctx of cdp.contexts) {
+            try {
+                const res = await cdp.call("Runtime.evaluate", { expression: EXP, returnByValue: true, awaitPromise: true, contextId: ctx.id });
+                if (res.result?.value && res.result.value.success) return res.result.value;
+            } catch (e) { }
+        }
     }
-    return { error: 'Context failed' };
+    return { error: 'Failed to set mode in any context' };
 }
 
 // 5. Set Model
-async function setModel(cdp, modelName) {
+async function setModel(cdpList, modelName) {
     const safeModel = JSON.stringify(modelName).slice(1, -1); // remove quotes
     const EXP = `(async () => {
         try {
@@ -452,13 +509,15 @@ async function setModel(cdp, modelName) {
             return { error: 'Model option not found' };
         } catch(err) { return { error: err.toString() }; }
     })()`;
-    for (const ctx of cdp.contexts) {
-        try {
-            const res = await cdp.call("Runtime.evaluate", { expression: EXP, returnByValue: true, awaitPromise: true, contextId: ctx.id });
-            if (res.result?.value) return res.result.value;
-        } catch (e) { }
+    for (const cdp of cdpList) {
+        for (const ctx of cdp.contexts) {
+            try {
+                const res = await cdp.call("Runtime.evaluate", { expression: EXP, returnByValue: true, awaitPromise: true, contextId: ctx.id });
+                if (res.result?.value && res.result.value.success) return res.result.value;
+            } catch (e) { }
+        }
     }
-    return { error: 'Context failed' };
+    return { error: 'Failed to set model in any context' };
 }
 
 // --- Main Server ---
@@ -557,6 +616,43 @@ async function createServer() {
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
+    // 5. Scroll Sync: Control IDE scroll from Client
+    async function injectScroll(cdpList, scrollTop) {
+        const SCROLL_SCRIPT = `(() => {
+            const cascade = document.getElementById('cascade');
+            if (!cascade) return false;
+            const scrollContainer = cascade.querySelector('.overflow-y-auto, [data-scroll-area]') || cascade;
+            scrollContainer.scrollTop = ${scrollTop};
+            return true;
+        })()`;
+
+        let success = false;
+        for (const cdp of cdpList) {
+            for (const ctx of cdp.contexts) {
+                try {
+                    const res = await cdp.call("Runtime.evaluate", { expression: SCROLL_SCRIPT, returnByValue: true, contextId: ctx.id });
+                    if (res.result?.value === true) success = true;
+                } catch (e) { }
+            }
+        }
+        return success;
+    }
+
+    // DEBUG: Dump Full HTML
+    app.get('/dump-html', async (req, res) => {
+        const port = parseInt(req.query.port) || 9000;
+        try {
+            const connections = await getOrConnectParams(port);
+            let output = '';
+            for (const conn of connections) {
+                const r = await conn.call("Runtime.evaluate", { expression: "document.documentElement.outerHTML", returnByValue: true });
+                output += `\n\n<!-- TARGET: ${conn.title} (${conn.url}) -->\n` + (r.result?.value || 'NULL');
+            }
+            fs.writeFileSync('debug_dump.html', output);
+            res.send(`Dumped to debug_dump.html (${output.length} bytes)`);
+        } catch (e) { res.status(500).send(e.message); }
+    });
+
     app.get('/slots', async (req, res) => {
         const instances = await findAllInstances();
         const slots = PORTS.map(port => {
@@ -593,39 +689,76 @@ async function createServer() {
     });
 
     // Server-side polling to push updates (Live Sync)
-    let tickCount = 0;
     setInterval(async () => {
         tickCount++;
-        const forceUpdate = (tickCount % 3 === 0); // Force update every 3s to fix "stuck" states
+        const forceUpdate = (tickCount % 5 === 0);
 
-        for (const ws of wss.clients) {
-            if (ws.readyState !== WebSocket.OPEN) continue;
+        const clients = Array.from(wss.clients).filter(c => c.readyState === WebSocket.OPEN);
+        if (tickCount % 5 === 0) console.log(`[V4-TICK] Clients connected: ${clients.length}`);
+
+        for (const ws of clients) {
             try {
                 const targetPort = ws.viewingPort || 9000;
                 const conn = await getOrConnectParams(targetPort);
-                if (!conn) continue;
+                if (!conn) {
+                    if (tickCount % 5 === 0) console.warn(`[V4-LOOP] No connection for port ${targetPort}`);
+                    continue;
+                }
 
                 const snapshot = await captureSnapshot(conn);
-
-                if (snapshot) {
-                    // Send if hash changed OR forced
-                    if (ws.lastHash !== snapshot.hash || forceUpdate) {
-                        ws.send(JSON.stringify({ type: 'snapshot_update', port: conn.port, ...snapshot }));
-                        ws.lastHash = snapshot.hash;
+                // [V4 Auto-Hunt] If snapshot is bad (Launchpad/Null) -> Hunt for better port
+                let effectiveSnapshot = snapshot;
+                if (!snapshot || (snapshot.targetTitle && (snapshot.targetTitle.includes('Launchpad') || snapshot.targetTitle.includes('Agent')))) {
+                    if (tickCount % 5 === 0) { // Don't hunt too aggressively
+                        for (const p of PORTS) {
+                            if (p === targetPort) continue;
+                            try {
+                                const tryConn = await getOrConnectParams(p);
+                                const trySnap = await captureSnapshot(tryConn);
+                                // If we found a real cascade in another port
+                                if (trySnap && trySnap.html && !trySnap.error) {
+                                    console.log(`[V4-AUTO] Found better target on Port ${p}! Redirecting client...`);
+                                    ws.send(JSON.stringify({ type: 'force_port_switch', port: p }));
+                                    ws.viewingPort = p;
+                                    effectiveSnapshot = trySnap; // Send it immediately
+                                    break;
+                                }
+                            } catch (e) { }
+                        }
                     }
                 }
-            } catch (e) { }
+
+                if (effectiveSnapshot) {
+                    if (ws.lastHash !== effectiveSnapshot.hash || forceUpdate) {
+                        ws.send(JSON.stringify({ type: 'snapshot_update', port: ws.viewingPort, ...effectiveSnapshot }));
+                        ws.lastHash = effectiveSnapshot.hash;
+                    }
+                }
+            } catch (e) {
+                console.error(`[V4-LOOP] Error:`, e.message);
+            }
         }
-    }, 1000); // 1s interval is good for responsiveness
+    }, 1000);
 
     wss.on('connection', ws => {
+        console.log(`[V4-WS] New client connected`);
         ws.viewingPort = 9000;
         ws.on('message', msg => {
             try {
                 const d = JSON.parse(msg);
-                if (d.type === 'switch_port') ws.viewingPort = parseInt(d.port);
+                if (d.type === 'switch_port') {
+                    console.log(`[V4-WS] Switching to port ${d.port}`);
+                    ws.viewingPort = parseInt(d.port);
+                    ws.lastHash = null; // Force update on switch
+                }
+                if (d.type === 'scroll_event') {
+                    // Sync scroll to IDE
+                    const conn = activeConnections.get(ws.viewingPort);
+                    if (conn) injectScroll(conn, d.scrollTop);
+                }
             } catch (e) { }
         });
+        ws.on('close', () => console.log(`[V4-WS] Client disconnected`));
     });
 
     server.listen(SERVER_PORT, '0.0.0.0', () => console.log(`🚀 [V4-STABLE] Listening on http://localhost:${SERVER_PORT}`));

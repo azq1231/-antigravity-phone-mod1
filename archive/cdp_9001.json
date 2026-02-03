@@ -1,0 +1,25 @@
+[ {
+   "description": "",
+   "devtoolsFrontendUrl": "https://chrome-devtools-frontend.appspot.com/serve_rev/@f15f401fb04924bb6505c6146a0dc3deb154b505/inspector.html?ws=localhost:9001/devtools/page/E1524ECF380D539AA795B5FECD34696E",
+   "id": "E1524ECF380D539AA795B5FECD34696E",
+   "title": "Launchpad",
+   "type": "page",
+   "url": "vscode-file://vscode-app/d:/Program%20Files/Antigravity/resources/app/out/vs/code/electron-browser/workbench/workbench-jetski-agent.html",
+   "webSocketDebuggerUrl": "ws://localhost:9001/devtools/page/E1524ECF380D539AA795B5FECD34696E"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "https://chrome-devtools-frontend.appspot.com/serve_rev/@f15f401fb04924bb6505c6146a0dc3deb154b505/inspector.html?ws=localhost:9001/devtools/page/67B63840158159FF3C73FE6F80657B5B",
+   "id": "67B63840158159FF3C73FE6F80657B5B",
+   "title": "FinanceFlow - Antigravity - Implementation Plan",
+   "type": "page",
+   "url": "vscode-file://vscode-app/d:/Program%20Files/Antigravity/resources/app/out/vs/code/electron-browser/workbench/workbench.html",
+   "webSocketDebuggerUrl": "ws://localhost:9001/devtools/page/67B63840158159FF3C73FE6F80657B5B"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "https://chrome-devtools-frontend.appspot.com/serve_rev/@f15f401fb04924bb6505c6146a0dc3deb154b505/inspector.html?ws=localhost:9001/devtools/page/C730E5B1D0A4AB819FC6BA48CC351A07",
+   "id": "C730E5B1D0A4AB819FC6BA48CC351A07",
+   "title": "",
+   "type": "worker",
+   "url": "",
+   "webSocketDebuggerUrl": "ws://localhost:9001/devtools/page/C730E5B1D0A4AB819FC6BA48CC351A07"
+} ]

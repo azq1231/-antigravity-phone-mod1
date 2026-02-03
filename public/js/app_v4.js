@@ -75,6 +75,23 @@ function connectWebSocket() {
         updateStatus(false);
         setTimeout(connectWebSocket, 2000);
     };
+
+    // Scroll Sync (Client -> Server)
+    let lastScrollTime = 0;
+    chatContainer.addEventListener('scroll', () => {
+        userIsScrolling = true;
+        clearTimeout(userScrollLockUntil);
+        userScrollLockUntil = setTimeout(() => userIsScrolling = false, 1000);
+
+        const now = Date.now();
+        if (now - lastScrollTime > 50 && ws && ws.readyState === WebSocket.OPEN) {
+            lastScrollTime = now;
+            ws.send(JSON.stringify({
+                type: 'scroll_event',
+                scrollTop: chatContainer.scrollTop
+            }));
+        }
+    });
 }
 
 function updateStatus(connected) {
@@ -85,8 +102,8 @@ function updateStatus(connected) {
 // Render Logic (V2 Style + CSS Fixes)
 function renderSnapshot(data) {
     if (!data || !data.html) return;
-    // Force Render for debugging live update issues
-    // if (data.hash === lastHash && !forceScrollToBottom) return;
+    // Re-enabled hash check for UI stability
+    if (data.hash === lastHash && !forceScrollToBottom) return;
     lastHash = data.hash;
 
     const scrollPos = chatContainer.scrollTop;
@@ -97,11 +114,23 @@ function renderSnapshot(data) {
         const style = document.createElement('style');
         style.id = 'v4-styles';
         style.textContent = `
-            #ag-chat-root, #cascade { background: transparent !important; color: #f8fafc !important; font-family: 'Inter', sans-serif !important; }
-            #ag-chat-root p, #cascade p, #ag-chat-root span, #cascade span { color: #e2e8f0 !important; }
-            #ag-chat-root a, #cascade a { color: #60a5fa !important; }
+            #ag-chat-root, #cascade { 
+                background: transparent !important; 
+                color: #ffffff !important; 
+                font-family: 'Inter', 'Microsoft JhengHei', sans-serif !important; 
+                font-weight: 500 !important;
+                -webkit-font-smoothing: antialiased !important;
+                height: auto !important; 
+                overflow: visible !important; 
+            }
+            #ag-chat-root p, #cascade p, #ag-chat-root span, #cascade span, #cascade div { 
+                color: #ffffff !important; 
+                opacity: 1 !important;
+                text-shadow: 0 1px 2px rgba(0,0,0,0.3); /* Subtle shadow for contrast */
+            }
+            #ag-chat-root a, #cascade a { color: #60a5fa !important; font-weight: 600 !important; }
             ::-webkit-scrollbar { width: 6px !important; }
-            ::-webkit-scrollbar-thumb { background: #334155 !important; border-radius: 10px; }
+            ::-webkit-scrollbar-thumb { background: #475569 !important; border-radius: 10px; }
         `;
         document.head.appendChild(style);
     }
@@ -176,7 +205,7 @@ async function sendMessage(retryCount = 0) {
             console.warn('[App] Send failed:', data.error || data.reason);
             // Optimistic behavior: Don't alert if busy/editor_not_found as user assumes success
             // But let's keep status text updated
-            statusText.textContent = `Push Failed: ${data.error || data.reason}`;
+            statusText.textContent = `Push Failed: ${data.error || data.reason} `;
             // Intentionally NO alert and NO resetSendState immediately to let user see status
             // Actually, we must enable button again
             resetSendState();
@@ -275,14 +304,14 @@ document.querySelector('.setting-chip:nth-child(3)').onclick = async () => { // 
 
         const portLabel = document.createElement('div');
         portLabel.className = 'slot-port';
-        portLabel.textContent = `PORT ${slot.port}${slot.port === currentViewingPort ? ' • VIEWING' : ''}`;
+        portLabel.textContent = `PORT ${slot.port}${slot.port === currentViewingPort ? ' • VIEWING' : ''} `;
 
         const title = document.createElement('div');
         title.className = 'slot-title';
-        title.textContent = slot.title || `Slot ${slot.port}`;
+        title.textContent = slot.title || `Slot ${slot.port} `;
 
         const status = document.createElement('div');
-        status.className = `slot-status ${slot.running ? 'status-running' : 'status-stopped'}`;
+        status.className = `slot - status ${slot.running ? 'status-running' : 'status-stopped'} `;
         status.textContent = slot.running ? 'RUNNING' : 'STOPPED';
 
         info.appendChild(portLabel);
@@ -305,16 +334,16 @@ document.querySelector('.setting-chip:nth-child(3)').onclick = async () => { // 
                     localStorage.setItem('lastViewingPort', targetPort);
 
                     // Update UI state immediately
-                    instanceText.textContent = `Port ${targetPort}`;
+                    instanceText.textContent = `Port ${targetPort} `;
                     lastHash = ''; // Force render next frame
 
                     // Show loading state
                     chatContent.innerHTML = `
-                        <div class="loading-state">
+        < div class="loading-state" >
                             <div class="loading-spinner"></div>
                             <p>Switching to Port ${targetPort}...</p>
-                        </div>
-                    `;
+                        </div >
+        `;
 
                     // Notify Server
                     if (ws && ws.readyState === WebSocket.OPEN) {

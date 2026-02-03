@@ -1,0 +1,33 @@
+[ {
+   "description": "",
+   "devtoolsFrontendUrl": "https://chrome-devtools-frontend.appspot.com/serve_rev/@f15f401fb04924bb6505c6146a0dc3deb154b505/inspector.html?ws=localhost:9000/devtools/page/06F67E7669C06B5C7B248D238C6AFB15",
+   "id": "06F67E7669C06B5C7B248D238C6AFB15",
+   "title": "Launchpad",
+   "type": "page",
+   "url": "vscode-file://vscode-app/d:/Program%20Files/Antigravity/resources/app/out/vs/code/electron-browser/workbench/workbench-jetski-agent.html",
+   "webSocketDebuggerUrl": "ws://localhost:9000/devtools/page/06F67E7669C06B5C7B248D238C6AFB15"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "https://chrome-devtools-frontend.appspot.com/serve_rev/@f15f401fb04924bb6505c6146a0dc3deb154b505/inspector.html?ws=localhost:9000/devtools/page/06554E2409D1082BCDCAE4949A212473",
+   "id": "06554E2409D1082BCDCAE4949A212473",
+   "title": "antigravity_phone_chat_ori - Antigravity - CODE_DOCUMENTATION.md",
+   "type": "page",
+   "url": "vscode-file://vscode-app/d:/Program%20Files/Antigravity/resources/app/out/vs/code/electron-browser/workbench/workbench.html",
+   "webSocketDebuggerUrl": "ws://localhost:9000/devtools/page/06554E2409D1082BCDCAE4949A212473"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "https://chrome-devtools-frontend.appspot.com/serve_rev/@f15f401fb04924bb6505c6146a0dc3deb154b505/inspector.html?ws=localhost:9000/devtools/page/A4BE1537877A7DA382E7C56CFC6406EF",
+   "id": "A4BE1537877A7DA382E7C56CFC6406EF",
+   "title": "",
+   "type": "worker",
+   "url": "",
+   "webSocketDebuggerUrl": "ws://localhost:9000/devtools/page/A4BE1537877A7DA382E7C56CFC6406EF"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "https://chrome-devtools-frontend.appspot.com/serve_rev/@f15f401fb04924bb6505c6146a0dc3deb154b505/inspector.html?ws=localhost:9000/devtools/page/8CB58B9DF8B1A005B1F2F530F5FCF19A",
+   "id": "8CB58B9DF8B1A005B1F2F530F5FCF19A",
+   "title": "",
+   "type": "worker",
+   "url": "",
+   "webSocketDebuggerUrl": "ws://localhost:9000/devtools/page/8CB58B9DF8B1A005B1F2F530F5FCF19A"
+} ]
