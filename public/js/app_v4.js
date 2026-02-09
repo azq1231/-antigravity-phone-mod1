@@ -1,4 +1,4 @@
-// --- app_v4.js: V4 Stable Frontend Logic (Isolated) ---
+// --- app_v4.js: V4.1 Stable Frontend Logic (Isolated) ---
 
 // Elements
 const chatContainer = document.getElementById('chatContainer');
@@ -41,6 +41,27 @@ async function fetchAppState() {
         if (data.mode && data.mode !== 'Unknown') modeText.textContent = data.mode;
         if (data.model && data.model !== 'Unknown') modelText.textContent = data.model;
         instanceText.textContent = `Port ${currentViewingPort}`;
+
+        // Dynamic Version Injection (Single Source of Truth)
+        if (data.version) {
+            const vMajorMinor = data.version.split('.').slice(0, 2).join('.');
+            const vLabel = `V${vMajorMinor}`;
+            cachedVLabel = vLabel;
+
+            document.title = `Antigravity ${vLabel} Stable`;
+            const headerTitle = document.querySelector('.header h1');
+            if (headerTitle) headerTitle.textContent = `Antigravity ${vLabel}`;
+
+            if (messageInput) messageInput.placeholder = `Message ${vLabel}...`;
+
+            const loadingMsg = document.querySelector('.loading-state p');
+            if (loadingMsg) loadingMsg.textContent = `Waiting for ${vLabel} snapshot...`;
+
+            // Only update status text if it already includes 'Live'
+            if (statusText.textContent.includes('Live')) {
+                statusText.textContent = `Live (${vLabel})`;
+            }
+        }
     } catch (e) { console.error('Sync failed', e); }
 }
 
@@ -94,9 +115,11 @@ function connectWebSocket() {
     });
 }
 
+let cachedVLabel = 'V4.1'; // Initial fallback, will be updated by fetchAppState
+
 function updateStatus(connected) {
     statusDot.className = connected ? 'status-dot connected' : 'status-dot disconnected';
-    statusText.textContent = connected ? 'Live (V4)' : 'Connecting...';
+    statusText.textContent = connected ? `Live (${cachedVLabel})` : 'Connecting...';
 }
 
 // Render Logic (V2 Style + CSS Fixes)
@@ -329,7 +352,7 @@ document.querySelector('.setting-chip:nth-child(3)').onclick = async () => { // 
         title.textContent = slot.title || `Slot ${slot.port} `;
 
         const status = document.createElement('div');
-        status.className = `slot - status ${slot.running ? 'status-running' : 'status-stopped'} `;
+        status.className = `slot-status ${slot.running ? 'status-running' : 'status-stopped'}`;
         status.textContent = slot.running ? 'RUNNING' : 'STOPPED';
 
         info.appendChild(portLabel);
@@ -357,11 +380,11 @@ document.querySelector('.setting-chip:nth-child(3)').onclick = async () => { // 
 
                     // Show loading state
                     chatContent.innerHTML = `
-        < div class="loading-state" >
+                        <div class="loading-state">
                             <div class="loading-spinner"></div>
                             <p>Switching to Port ${targetPort}...</p>
-                        </div >
-        `;
+                        </div>
+                    `;
 
                     // Notify Server
                     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -424,15 +447,7 @@ document.querySelector('.setting-chip:nth-child(3)').onclick = async () => { // 
     document.getElementById('modalOverlay').style.display = 'flex';
 };
 
-async function loadSnapshot() {
-    try {
-        const res = await fetchWithAuth(`/snapshot?port=${currentViewingPort}`);
-        const data = await res.json();
-        renderSnapshot(data);
-    } catch (e) { }
-}
-
-// Listeners
+// --- Event Listeners ---
 sendBtn.onclick = () => sendMessage(0);
 messageInput.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(0); } };
 refreshBtn.onclick = () => { location.reload(); };

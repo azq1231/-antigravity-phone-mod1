@@ -19,6 +19,10 @@ import { spawnInstance, killInstance } from './core/instance_manager.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+// Read version from package.json
+const pkg = JSON.parse(fs.readFileSync(join(__dirname, 'package.json'), 'utf8'));
+const APP_VERSION = pkg.version;
+
 const PORTS = [9000, 9001, 9002, 9003];
 const POLL_INTERVAL = 1000; // 1 second
 const SERVER_PORT = process.env.PORT || 3000;
@@ -248,6 +252,17 @@ async function captureSnapshot(cdp) {
             if (container && container !== clone) container.remove();
         });
         
+        // --- NOISE FILTER START ---
+        const garbageKeywords = ['exit code 0', 'checked command status', 'good', 'bad', 'fast', 'claude', 'gemini', 'gpt-oss', 'ask anything', 'ctrl+l'];
+        const allNodes = clone.querySelectorAll('*');
+        allNodes.forEach(el => {
+            if (el.children.length === 0 || (el.children.length === 1 && el.firstElementChild.tagName === 'SPAN')) {
+                const txt = (el.innerText || '').toLowerCase();
+                if (garbageKeywords.some(kw => txt.includes(kw))) el.remove();
+            }
+        });
+        // --- NOISE FILTER END ---
+
         const html = clone.outerHTML;
         
         const rules = [];
@@ -353,8 +368,6 @@ async function injectMessage(cdp, text) {
             editor.dispatchEvent(new InputEvent("beforeinput", { bubbles:true, inputType:"insertText", data: textToInsert }));
             editor.dispatchEvent(new InputEvent("input", { bubbles:true, inputType:"insertText", data: textToInsert }));
         }
-
-        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
 
         await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
 
@@ -690,27 +703,46 @@ async function setModel(cdp, modelName) {
 
             if (!visibleDialog) return { error: 'Model list not opened' };
 
-            // 4. Select specific model inside the dialog
-            // Search deep for the specific text
+            // 4. Select specific model
             const allDialogEls = Array.from(visibleDialog.querySelectorAll('*'));
             
-            // Try exact match first
+            // Priority 1: Exact/Partial Match
             let target = allDialogEls.find(el => 
-                el.children.length === 0 && el.textContent.trim() === '${modelName}'
+                el.children.length === 0 && el.textContent.includes('${safeModel}')
             );
             
-            // Try partial/inclusive match
+            // Priority 2: Fuzzy Match (ignore text in parentheses space)
             if (!target) {
-                 target = allDialogEls.find(el => 
-                    el.children.length === 0 && el.textContent.includes('${modelName}')
-                );
+                const simpleName = '${safeModel}'.split('(')[0].trim();
+                if (simpleName.length > 2) {
+                    target = allDialogEls.find(el => 
+                        el.children.length === 0 && el.textContent.includes(simpleName)
+                    );
+                }
             }
 
             if (target) {
-                target.click();
+                // Smart Click: Traverse up to find the clickable container
+                let clickable = target;
+                for (let i = 0; i < 4; i++) {
+                    if (!clickable || clickable === visibleDialog) break;
+                    const style = window.getComputedStyle(clickable);
+                    if (clickable.tagName === 'BUTTON' || style.cursor === 'pointer' || clickable.getAttribute('role') === 'option') {
+                        break;
+                    }
+                    if (clickable.parentElement) clickable = clickable.parentElement;
+                }
+                const finalTarget = clickable || target;
+
+                const opts = { bubbles: true, cancelable: true, view: window };
+                finalTarget.dispatchEvent(new MouseEvent('mousedown', opts));
+                finalTarget.dispatchEvent(new MouseEvent('mouseup', opts));
+                finalTarget.click();
+                
                 await new Promise(r => setTimeout(r, 200));
                 return { success: true };
             }
+
 
             return { error: 'Model "${modelName}" not found in list. Visible: ' + visibleDialog.innerText.substring(0, 100) };
         } catch(err) {

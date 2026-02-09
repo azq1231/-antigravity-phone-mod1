@@ -51,8 +51,8 @@
 
         .glass-card {
             background: var(--card-bg);
-            backdrop-filter: blur(12px);
             -webkit-backdrop-filter: blur(12px);
+            backdrop-filter: blur(12px);
             border: 1px solid var(--border);
             border-radius: 24px;
             padding: 32px;
@@ -69,6 +69,7 @@
             font-weight: 700;
             background: linear-gradient(to right, #818cf8, #c084fc);
             -webkit-background-clip: text;
+            background-clip: text;
             -webkit-text-fill-color: transparent;
             margin-bottom: 8px;
         }
@@ -103,6 +104,10 @@
             font-size: 14px;
             outline: none;
             transition: border-color 0.2s;
+        }
+
+        .input-short {
+            flex: 0 0 80px;
         }
 
         input:focus {
@@ -294,7 +299,7 @@
                 <div class="status-label">伺服器位置設定</div>
                 <div class="input-group">
                     <input type="text" id="serverHost" placeholder="例如: localhost" value="localhost">
-                    <input type="text" id="serverPort" placeholder="Port" value="3004" style="flex: 0 0 80px;">
+                    <input type="text" id="serverPort" placeholder="Port" value="3004" class="input-short">
                 </div>
             </div>
 

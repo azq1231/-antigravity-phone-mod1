@@ -29,7 +29,8 @@ export async function captureSnapshot(cdpList) {
         // 2. Text-Based Removal: IDE Meta Info
         const garbageKeywords = [
             'files with changes', 'review changes', 'select file', '選擇檔案', 
-            'fast', 'claude', 'gemini', 'gpt-oss', 'ask anything', 'ctrl+l'
+            'fast', 'claude', 'gemini', 'gpt-oss', 'ask anything', 'ctrl+l',
+            'exit code 0', 'checked command status', 'good', 'bad'
         ];
         const allNodes = clone.querySelectorAll('*');
         allNodes.forEach(el => {
@@ -252,8 +253,45 @@ export async function setModel(cdpList, modelName) {
             await new Promise(r => setTimeout(r, 600));
             const visibleDialog = Array.from(document.querySelectorAll('[role="dialog"], div')).find(d => d.offsetHeight > 0 && d.innerText.includes('${safeModel}'));
             if (!visibleDialog) return { error: 'Model list not opened' };
-            const target = Array.from(visibleDialog.querySelectorAll('*')).find(el => el.textContent.includes('${safeModel}'));
-            if (target) { target.click(); return { success: true }; }
+            // 4. Select specific model
+            const allDialogEls = Array.from(visibleDialog.querySelectorAll('*'));
+            
+            // Priority 1: Exact/Partial Match
+            let target = allDialogEls.find(el => 
+                el.children.length === 0 && el.textContent.includes('${safeModel}')
+            );
+            
+            // Priority 2: Fuzzy Match (ignore text in parentheses, e.g. "Gemini 3 Pro (High)" -> "Gemini 3 Pro")
+            if (!target) {
+                const simpleName = '${safeModel}'.split('(')[0].trim();
+                if (simpleName.length > 2) {
+                    target = allDialogEls.find(el => 
+                        el.children.length === 0 && el.textContent.includes(simpleName)
+                    );
+                }
+            }
+
+            if (target) {
+                // Smart Click: Traverse up to find the clickable container
+                let clickable = target;
+                for (let i = 0; i < 4; i++) {
+                    if (!clickable || clickable === visibleDialog) break;
+                    const style = window.getComputedStyle(clickable);
+                    if (clickable.tagName === 'BUTTON' || style.cursor === 'pointer' || clickable.getAttribute('role') === 'option') {
+                        break;
+                    }
+                    clickable = clickable.parentElement;
+                }
+                const finalTarget = clickable || target;
+
+                // Simulated full interaction chain
+                const opts = { bubbles: true, cancelable: true, view: window };
+                finalTarget.dispatchEvent(new MouseEvent('mousedown', opts));
+                finalTarget.dispatchEvent(new MouseEvent('mouseup', opts));
+                finalTarget.click();
+                
+                return { success: true };
+            }
             return { error: 'Model option not found' };
         } catch(err) { return { error: err.toString() }; }
     })()`;

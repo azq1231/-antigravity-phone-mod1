@@ -1,11 +1,16 @@
 {
     "name": "ag-mobile-monitor",
-    "version": "1.0.0",
+    "version": "4.1.0",
     "type": "module",
     "description": "Mobile web interface for monitoring Antigravity chat via visual snapshots",
     "scripts": {
         "start": "node server.js",
-        "dev": "node server.js"
+        "dev": "node server.js",
+        "test": "node scripts/sanity_check.js && npx playwright test",
+        "test:unit": "vitest run",
+        "test:watch": "vitest",
+        "test:watch-all": "node --watch --watch-path=./server.js --watch-path=./core --watch-path=./public/js scripts/sanity_check.js",
+        "test:stress": "node scripts/stress_test.js"
     },
     "dependencies": {
         "compression": "^1.8.1",
@@ -18,5 +23,9 @@
     "license": "GPL-3.0-only",
     "engines": {
         "node": ">=16.0.0"
+    },
+    "devDependencies": {
+        "@playwright/test": "^1.58.2",
+        "vitest": "^4.0.18"
     }
 }

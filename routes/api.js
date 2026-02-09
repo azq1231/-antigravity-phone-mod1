@@ -11,6 +11,11 @@ const __dirname = dirname(__filename);
 
 const router = express.Router();
 const PORTS = [9000, 9001, 9002, 9003];
+
+// Read version from package.json
+const pkg = JSON.parse(fs.readFileSync(join(__dirname, '..', 'package.json'), 'utf8'));
+const APP_VERSION = pkg.version;
+
 const DEDUP_WINDOW = 30000;
 const processedMsgIds = new Map();
 
@@ -47,8 +52,8 @@ router.get('/app-state', async (req, res) => {
     try {
         const conn = await getOrConnectParams(parseInt(req.query.port) || 9000);
         const state = await getAppState(conn);
-        res.json(state);
-    } catch (e) { res.json({ mode: 'Unknown', model: 'Unknown' }); }
+        res.json({ ...state, version: APP_VERSION });
+    } catch (e) { res.json({ mode: 'Unknown', model: 'Unknown', version: APP_VERSION }); }
 });
 
 router.post('/set-mode', async (req, res) => {

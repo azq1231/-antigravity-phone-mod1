@@ -969,13 +969,7 @@ scrollToBottomBtn.addEventListener('click', () => {
     scrollToBottom();
 });
 
-// --- Quick Actions ---
-function quickAction(text) {
-    messageInput.value = text;
-    messageInput.style.height = 'auto';
-    messageInput.style.height = messageInput.scrollHeight + 'px';
-    messageInput.focus();
-}
+// (Duplicate quickAction removed)
 
 // --- Stop Logic ---
 stopBtn.addEventListener('click', async () => {
@@ -1151,10 +1145,7 @@ window.handleSlotAction = handleSlotAction;
 function openModalUI() {
     modalOverlay.classList.add('show');
 }
-function closeModal() {
-    modalOverlay.classList.remove('show');
-}
-window.closeModal = closeModal;
+// (Duplicate closeModal removed)
 
 
 modelBtn.addEventListener('click', () => {

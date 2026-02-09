@@ -45,3 +45,8 @@ export async function isPortInUse(port) {
         });
     });
 }
+
+export function cleanText(text) {
+    if (!text) return '';
+    return text.trim().replace(/\n{2,}/g, '\n');
+}
