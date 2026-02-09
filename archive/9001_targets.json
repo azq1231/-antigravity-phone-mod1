@@ -1,0 +1,33 @@
+[ {
+   "description": "",
+   "devtoolsFrontendUrl": "https://chrome-devtools-frontend.appspot.com/serve_rev/@caff226ed96db00961b7046a5dc9f8db004e7fbb/inspector.html?ws=127.0.0.1:9001/devtools/page/A771280D47CA6E46D52F269CD533116C",
+   "id": "A771280D47CA6E46D52F269CD533116C",
+   "title": "Launchpad",
+   "type": "page",
+   "url": "vscode-file://vscode-app/d:/Program%20Files/Antigravity/resources/app/out/vs/code/electron-browser/workbench/workbench-jetski-agent.html",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:9001/devtools/page/A771280D47CA6E46D52F269CD533116C"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "https://chrome-devtools-frontend.appspot.com/serve_rev/@caff226ed96db00961b7046a5dc9f8db004e7fbb/inspector.html?ws=127.0.0.1:9001/devtools/page/96405FCBD46D3D4FBC30EE7C10F9132B",
+   "id": "96405FCBD46D3D4FBC30EE7C10F9132B",
+   "title": "onlinenovell - Antigravity - Walkthrough",
+   "type": "page",
+   "url": "vscode-file://vscode-app/d:/Program%20Files/Antigravity/resources/app/out/vs/code/electron-browser/workbench/workbench.html",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:9001/devtools/page/96405FCBD46D3D4FBC30EE7C10F9132B"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "https://chrome-devtools-frontend.appspot.com/serve_rev/@caff226ed96db00961b7046a5dc9f8db004e7fbb/inspector.html?ws=127.0.0.1:9001/devtools/page/C9B56E0C3175F1E7416F4B7B00E4D95D",
+   "id": "C9B56E0C3175F1E7416F4B7B00E4D95D",
+   "title": "",
+   "type": "worker",
+   "url": "",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:9001/devtools/page/C9B56E0C3175F1E7416F4B7B00E4D95D"
+}, {
+   "description": "",
+   "devtoolsFrontendUrl": "https://chrome-devtools-frontend.appspot.com/serve_rev/@caff226ed96db00961b7046a5dc9f8db004e7fbb/inspector.html?ws=127.0.0.1:9001/devtools/page/7741C241659A7968D6706AE41BBDA2F5",
+   "id": "7741C241659A7968D6706AE41BBDA2F5",
+   "title": "",
+   "type": "worker",
+   "url": "",
+   "webSocketDebuggerUrl": "ws://127.0.0.1:9001/devtools/page/7741C241659A7968D6706AE41BBDA2F5"
+} ]

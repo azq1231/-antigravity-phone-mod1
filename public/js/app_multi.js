@@ -75,10 +75,26 @@ async function fetchAppState() {
         }
 
         // Active Port Sync - In multi-session, we trust our local selection
-        instanceText.textContent = `Port ${currentViewingPort}`;
+        // Use title for better recognition if available
+        const name = data.title || `Port ${currentViewingPort}`;
+        instanceText.textContent = cleanInstanceName({ title: name, port: currentViewingPort });
 
         console.log(`[SYNC] State updated for Port ${currentViewingPort}:`, data);
     } catch (e) { console.error('[SYNC] Failed to sync state', e); }
+}
+
+function cleanInstanceName(data) {
+    if (!data.title) return `Port ${data.port}`;
+
+    // Remove "Antigravity - " prefix if it exists to make it cleaner on mobile
+    let name = data.title.replace(/^Antigravity\s*-\s*/i, '');
+
+    // Remove common suffixes like " - Walkthrough" or " - Settings"
+    name = name.replace(/\s*-\s*(Walkthrough|Settings|Launchpad)$/i, '');
+
+    // Limit length for mobile screen
+    if (name.length > 20) name = name.substring(0, 17) + '...';
+    return name;
 }
 
 // --- SSL Banner ---
@@ -177,27 +193,10 @@ function connectWebSocket() {
         if (data.type === 'switched') {
             currentViewingPort = data.port;
             localStorage.setItem('lastViewingPort', currentViewingPort);
-            const name = cleanInstanceName(data);
-            instanceText.textContent = name;
+            instanceText.textContent = cleanInstanceName(data);
             fetchAppState(); // Sync mode/model for the new port
         }
     };
-
-    function cleanInstanceName(data) {
-        if (!data.title) return `Port ${data.port}`;
-
-        // Also ensure currentViewingPort stays in sync if server forces an update
-        if (data.port && data.port !== currentViewingPort) {
-            currentViewingPort = data.port;
-            localStorage.setItem('lastViewingPort', currentViewingPort);
-        }
-
-        // Remove "Antigravity - " prefix if it exists to make it cleaner on mobile
-        let name = data.title.replace(/^Antigravity\s*-\s*/i, '');
-        // Limit length
-        if (name.length > 15) name = name.substring(0, 12) + '...';
-        return name;
-    }
 
 
     ws.onclose = () => {
@@ -381,14 +380,23 @@ function renderSnapshot(data, force = false) {
             '    display: none !important;\n' +
             '}\n' +
             '\n' +
-            '#ag-chat-root p, #ag-chat-root h1, #ag-chat-root h2, #ag-chat-root h3, #ag-chat-root h4, #ag-chat-root h5, #ag-chat-root span, #ag-chat-root div, #ag-chat-root li, \n' +
-            '#cascade p, #cascade h1, #cascade h2, #cascade h3, #cascade h4, #cascade h5, #cascade span, #cascade div, #cascade li {\n' +
-            '    color: #e2e8f0 !important; /* 強制亮白色 */\n' +
+            '/* 全局文字顏色與對比度強化 */\n' +
+            '#chatContent *, #ag-snapshot-content *, #cascade * {\n' +
+            '    color: #f8fafc !important; /* 純白藍文字 */\n' +
+            '    background-color: transparent !important; \n' +
+            '    border-color: rgba(255,255,255,0.1) !important;\n' +
+            '    text-shadow: 0 0 1px rgba(0,0,0,0.5) !important;\n' +
             '}\n' +
             '\n' +
-            '#ag-chat-root a, #cascade a {\n' +
+            '/* 確保代碼塊背景依然深色 */\n' +
+            'pre, code, .monaco-editor-background {\n' +
+            '    background-color: #1e293b !important;\n' +
+            '    color: #f1f5f9 !important;\n' +
+            '}\n' +
+            '\n' +
+            '#chatContent a, #ag-snapshot-content a {\n' +
             '    color: #60a5fa !important;\n' +
-            '    text-decoration: underline;\n' +
+            '    text-decoration: underline !important;\n' +
             '}\n' +
             '\n' +
             '/* Fix Inline Code - Ultra-compact */\n' +
@@ -791,8 +799,19 @@ async function sendMessage(retryCount = 0, originalHTML = null) {
         }
 
         // Increased Retry Limit to 25 (approx 150 seconds total)
-        const shouldRetry = (data?.reason === "busy" || data?.error === "editor_not_found") && retryCount < 25;
+        const shouldRetry = (data?.reason === "busy" || data?.error === "editor_not_found" || data?.reason === "no_context") && retryCount < 25;
         if (shouldRetry) {
+            // Log retry reason for debugging
+            if (retryCount === 0) {
+                if (data?.reason === "busy") {
+                    console.log('[SEND] Antigravity 正在生成回應,自動重試中...');
+                } else if (data?.error === "editor_not_found") {
+                    console.log('[SEND] 找不到編輯器元素,自動重試中...');
+                } else if (data?.reason === "no_context") {
+                    console.log('[SEND] CDP 上下文暫時不可用,自動重試中...');
+                }
+            }
+
             // Exponential backoff, capping at 6 seconds
             const delay = Math.min(2000 * Math.pow(1.2, retryCount), 6000);
             await new Promise(r => setTimeout(r, delay));
@@ -809,12 +828,33 @@ async function sendMessage(retryCount = 0, originalHTML = null) {
 
     } catch (e) {
         console.error('[SEND] Error:', e.message);
+
+        // Show user-friendly error message based on error type
+        let userMessage = '';
+        if (e.message.includes('editor_not_found')) {
+            userMessage = '⚠️ 找不到輸入框\n請確認 Antigravity 在對話頁面';
+            loadSnapshot();
+        } else if (e.message.includes('no_context')) {
+            userMessage = '❌ 連線異常\n請重新整理頁面或重啟 Antigravity';
+        } else if (e.message.includes('busy')) {
+            userMessage = '⏳ Antigravity 忙碌中\n請稍後再試';
+        } else if (e.message.includes('Failed to fetch') || e.message.includes('NetworkError')) {
+            userMessage = '🌐 網路連線問題\n請檢查 Tailscale 或 Wi-Fi 連線';
+        }
+
+        // Show error in UI
         const wrapper = messageInput.closest('.input-wrapper');
         if (wrapper) {
             wrapper.classList.add('input-error');
             setTimeout(() => wrapper.classList.remove('input-error'), 3000);
+
+            // Display error message as tooltip or alert (optional)
+            if (userMessage && retryCount === 0) {
+                // Only show alert on first failure, not during retries
+                console.error('[SEND] ' + userMessage.replace(/\n/g, ' '));
+            }
         }
-        if (e.message.includes('editor_not_found')) loadSnapshot();
+
         return false;
 
     } finally {
@@ -1211,6 +1251,8 @@ chatContainer.addEventListener('click', async (e) => {
 
 // --- Init ---
 connectWebSocket();
-// Sync state initially and every 5 seconds to keep phone in sync with desktop changes
-fetchAppState();
+// 立即同步及抓取畫面，解決 "Waiting for snapshot..." 延遲問題
+fetchAppState().then(() => {
+    loadSnapshot(); // 獲取狀態後立刻抓取第一次畫面
+});
 setInterval(fetchAppState, 5000);

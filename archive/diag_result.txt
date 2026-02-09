@@ -1,0 +1,65 @@
+[1m[36m+----------------------------------------------------------+[0m
+[1m[36m|     Antigravity Phone Fix - Ultimate Diagnostics v5.0   |[0m
+[1m[36m+----------------------------------------------------------+[0m
+
+[36m[1/10] Environment Variables (.env)[0m
+  [32m??.env 瑼?摮[0m
+  [32m??APP_PASSWORD 撌脰身摰?[0m
+  [32m??PORT 撌脰身摰?[0m
+
+[36m[2/10] ?瑼?摰??[0m
+  [32m??server.js (56324 bytes)[0m
+  [32m??package.json (604 bytes)[0m
+  [32m??public/index.html (5504 bytes)[0m
+  [32m??public/js/app_multi.js (49122 bytes)[0m
+  [32m??public/sw.js (540 bytes)[0m
+  [32m??core/cdp_manager.js (4895 bytes)[0m
+  [32m??core/automation.js (13908 bytes)[0m
+  [32m??core/instance_manager.js (1883 bytes)[0m
+  [32m??core/utils.js (1475 bytes)[0m
+  [32m??routes/api.js (3823 bytes)[0m
+
+[36m[3/10] HTML 鞈?撘撽?[0m
+  [32m??Script: js/app_multi.js[0m
+  [32m??CSS: css/style.css[0m
+
+[36m[4/10] 璅∠?靘陷?那??[0m
+  [90m?對? ??: server.js[0m
+  [32m??Package/Built-in: ws[0m
+  [32m??Package/Built-in: url[0m
+  [32m??Package/Built-in: path[0m
+  [32m?????: ./scripts/ui_inspector.js[0m
+  [32m??Package/Built-in: child_process[0m
+  [32m?????: ./core/cdp_manager.js[0m
+  [32m?????: ./core/instance_manager.js[0m
+  [90m?對? ??: routes/api.js[0m
+  [32m??Package/Built-in: path[0m
+  [32m??Package/Built-in: url[0m
+  [32m?????: ../core/cdp_manager.js[0m
+  [32m?????: ../core/automation.js[0m
+  [32m?????: ../core/instance_manager.js[0m
+
+[36m[5/10] Node Modules 摰??[0m
+  [32m?????隞嗅歇摰?[0m
+
+[36m[6/10] ???????[0m
+  [31m??Phone Server (3004) ?Ｙ?[0m
+  [32m??Antigravity (9000) ?函?[0m
+
+[36m[7/10] API 蝡舫??亙熒[0m
+  [32m??/slots API 甇?虜[0m
+
+[36m[8/10] 蝤?霈撖急???[0m
+  [32m???豢??桅??航?撖?[0m
+
+[36m[9/10] 蝟餌絞鞈???葫[0m
+  [90m?對? 閮擃? 84.2% 撌脖蝙??(5.0GB ?舐)[0m
+  [90m?對? CPU ?詨??? 16[0m
+
+[36m[10/10] 餈??啣虜?亥?[0m
+  [32m???餈隤?＊?航炊[0m
+
+[36m???????????????????? 閮箸蝮賜? ????????????????????[0m
+[31m???航炊: 1 ??[0m  [33m?? 霅血?: 0 ??[0m
+憒??芸?靽桀儔嚗?頛詨 /fix
+

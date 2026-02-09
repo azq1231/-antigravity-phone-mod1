@@ -11,8 +11,10 @@ import os from 'os';
 import WebSocket from 'ws';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { inspectUI } from './ui_inspector.js';
+import { inspectUI } from './scripts/ui_inspector.js';
 import { execSync } from 'child_process';
+import { findAllInstances } from './core/cdp_manager.js';
+import { spawnInstance, killInstance } from './core/instance_manager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -26,10 +28,12 @@ const AUTH_COOKIE_NAME = 'ag_auth_token';
 let AUTH_TOKEN = 'ag_default_token';
 
 
-// Shared CDP connection
 let cdpConnection = null;
+let activePort = 9000;
+let activeTitle = 'Antigravity';
 let lastSnapshot = null;
 let lastSnapshotHash = null;
+let isSwitching = false;
 
 // Kill any existing process on the server port (prevents EADDRINUSE)
 function killPortProcess(port) {
@@ -109,39 +113,6 @@ function getJson(url) {
     });
 }
 
-// Find ALL active Antigravity CDP endpoints
-async function findAllInstances() {
-    const instances = [];
-    for (const port of PORTS) {
-        try {
-            const list = await getJson(`http://127.0.0.1:${port}/json/list`);
-            // Relaxed Discovery Logic:
-            // 1. Prefer 'workbench.html' (The main window)
-            // 2. Accept type 'page' (Other windows)
-            // 3. Accept anything with a WebSocket URL (Debug)
-
-            // Filter out obviously wrong targets like shared workers or extensions if possible, 
-            // but for now, we want to be permissive to see SOMETHING.
-            let candidate = list.find(t => t.url?.includes('workbench.html'));
-
-            // Fallback: Find any page-like target if workbench isn't explicitly named yet
-            if (!candidate) {
-                candidate = list.find(t => t.type === 'page' && t.webSocketDebuggerUrl);
-            }
-
-            if (candidate && candidate.webSocketDebuggerUrl) {
-                instances.push({
-                    port,
-                    url: candidate.webSocketDebuggerUrl,
-                    title: candidate.title || `Antigravity (${port})`
-                });
-            }
-        } catch (e) {
-            // Port not active or not responding, skip
-        }
-    }
-    return instances;
-}
 
 // Connect to CDP
 async function connectCDP(url) {
@@ -232,18 +203,31 @@ async function connectCDP(url) {
 // Capture chat snapshot
 async function captureSnapshot(cdp) {
     const CAPTURE_SCRIPT = `(() => {
-        const cascade = document.getElementById('cascade');
-        if (!cascade) {
-            // Debug info
-            const body = document.body;
-            const childIds = Array.from(body.children).map(c => c.id).filter(id => id).join(', ');
-            return { error: 'cascade not found', debug: { hasBody: !!body, availableIds: childIds } };
-        }
+        // 智慧型對話容器偵測 (精確定位訊息流)
+        const findChatContainer = () => {
+            // 1. 優先找原本的 cascade
+            const cascade = document.getElementById('cascade');
+            if (cascade) return cascade;
+            
+            // 2. 搜尋具備『訊息列表』特徵的容器 (ID 包含 cascade 且具有捲軸)
+            const cascadeLike = document.querySelector('div[id*="cascade"][class*="overflow"]');
+            if (cascadeLike) return cascadeLike;
+
+            // 3. 搜尋主內容區 (排除側邊欄)
+            const main = document.querySelector('main') || document.querySelector('[role="main"]');
+            if (main) return main;
+
+            // 4. 最後手段：尋找可見的捲軸容器
+            return document.querySelector('.overflow-y-auto') || document.body;
+        };
+
+        const target = findChatContainer();
+        if (!target) return { error: 'No container found' };
         
-        const cascadeStyles = window.getComputedStyle(cascade);
+        const targetStyles = window.getComputedStyle(target);
         
         // Find the main scrollable container
-        const scrollContainer = cascade.querySelector('.overflow-y-auto, [data-scroll-area]') || cascade;
+        const scrollContainer = target.querySelector('.overflow-y-auto, [data-scroll-area]') || target;
         const scrollInfo = {
             scrollTop: scrollContainer.scrollTop,
             scrollHeight: scrollContainer.scrollHeight,
@@ -251,14 +235,18 @@ async function captureSnapshot(cdp) {
             scrollPercent: scrollContainer.scrollTop / (scrollContainer.scrollHeight - scrollContainer.clientHeight) || 0
         };
         
-        // Clone cascade to modify it without affecting the original
-        const clone = cascade.cloneNode(true);
+        // Clone to modify it without affecting the original
+        const clone = target.cloneNode(true);
+        
+        // 統一識別標籤，確保前端 CSS 永遠抓得到
+        clone.id = 'ag-snapshot-content';
         
         // Remove the input box / chat window (last direct child div containing contenteditable)
-        const inputContainer = clone.querySelector('[contenteditable="true"]')?.closest('div[id^="cascade"] > div');
-        if (inputContainer) {
-            inputContainer.remove();
-        }
+        const inputs = clone.querySelectorAll('[contenteditable="true"], textarea, button[type="submit"], [role="textbox"]');
+        inputs.forEach(el => {
+            const container = el.closest('div[id*="cascade"] > div') || el.parentElement;
+            if (container && container !== clone) container.remove();
+        });
         
         const html = clone.outerHTML;
         
@@ -275,9 +263,9 @@ async function captureSnapshot(cdp) {
         return {
             html: html,
             css: allCSS,
-            backgroundColor: cascadeStyles.backgroundColor,
-            color: cascadeStyles.color,
-            fontFamily: cascadeStyles.fontFamily,
+            backgroundColor: targetStyles.backgroundColor,
+            color: targetStyles.color,
+            fontFamily: targetStyles.fontFamily,
             scrollInfo: scrollInfo,
             stats: {
                 nodes: clone.getElementsByTagName('*').length,
@@ -327,10 +315,30 @@ async function injectMessage(cdp, text) {
         const cancel = document.querySelector('[data-tooltip-id="input-send-button-cancel-tooltip"]');
         if (cancel && cancel.offsetParent !== null) return { ok:false, reason:"busy" };
 
-        const editors = [...document.querySelectorAll('#cascade [data-lexical-editor="true"][contenteditable="true"][role="textbox"]')]
-            .filter(el => el.offsetParent !== null);
-        const editor = editors.at(-1);
-        if (!editor) return { ok:false, error:"editor_not_found" };
+        // 強化版編輯器偵測邏輯 - 限制在 #cascade 內 (防止誤輸入到終端機)
+        const findEditor = () => {
+            const root = document.getElementById('cascade') || document;
+            
+            // 1. 優先尋找原本的 Lexical 編輯器
+            const lexicalEditors = [...root.querySelectorAll('[data-lexical-editor="true"][contenteditable="true"]')]
+                .filter(el => el.offsetParent !== null);
+            if (lexicalEditors.length > 0) return lexicalEditors.at(-1);
+
+            // 2. 備援：尋找任何可見的 contenteditable 區域
+            const allContentEditable = [...root.querySelectorAll('[contenteditable="true"]')]
+                .filter(el => el.offsetParent !== null && el.innerText.length < 5000);
+            if (allContentEditable.length > 0) return allContentEditable.at(-1);
+
+            // 3. 備援：尋找 textarea
+            const textareas = [...root.querySelectorAll('textarea')]
+                .filter(el => el.offsetParent !== null);
+            if (textareas.length > 0) return textareas.at(-1);
+
+            return null;
+        };
+
+        const editor = findEditor();
+        if (!editor) return { ok:false, error:"editor_not_found", debug: { html: document.body.innerHTML.substring(0, 500) } };
 
         const textToInsert = ${safeText};
 
@@ -348,15 +356,37 @@ async function injectMessage(cdp, text) {
 
         await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
 
-        const submit = document.querySelector("svg.lucide-arrow-right")?.closest("button");
-        if (submit && !submit.disabled) {
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+        // 強化版發送按鈕偵測
+        const findSubmitBtn = () => {
+            // 1. 尋找常見的發送圖標按鈕
+            const selectors = [
+                'button svg.lucide-arrow-right',
+                'button svg.lucide-send',
+                'button[type="submit"]',
+                '[aria-label*="Send"]',
+                '[data-testid="send-button"]'
+            ];
+            for (const s of selectors) {
+                const btn = document.querySelector(s)?.closest('button') || document.querySelector(s);
+                if (btn && btn.offsetParent !== null && !btn.disabled) return btn;
+            }
+            
+            // 2. 尋找包含「Send」字樣的按鈕
+            const allBtns = [...document.querySelectorAll('button')];
+            return allBtns.find(b => b.innerText.toLowerCase().includes('send') && b.offsetParent !== null && !b.disabled);
+        };
+
+        const submit = findSubmitBtn();
+        if (submit) {
             submit.click();
             return { ok:true, method:"click_submit" };
         }
 
         // Submit button not found, but text is inserted - trigger Enter key
-        editor.dispatchEvent(new KeyboardEvent("keydown", { bubbles:true, key:"Enter", code:"Enter" }));
-        editor.dispatchEvent(new KeyboardEvent("keyup", { bubbles:true, key:"Enter", code:"Enter" }));
+        editor.dispatchEvent(new KeyboardEvent("keydown", { bubbles:true, key:"Enter", code:"Enter", keyCode: 13, which: 13 }));
+        editor.dispatchEvent(new KeyboardEvent("keyup", { bubbles:true, key:"Enter", code:"Enter", keyCode: 13, which: 13 }));
         
         return { ok:true, method:"enter_keypress" };
     })()`;
@@ -809,9 +839,8 @@ function isLocalRequest(req) {
         ip.startsWith('::ffff:10.');
 }
 
-// Initialize CDP connection
-let activePort = null;
-let isSwitching = false; // Lock to prevent poll loop from interfering during switch
+// Initialized at top level
+isSwitching = false; // Lock to prevent poll loop from interfering during switch
 
 async function initCDP(targetPort = null) {
     // Strategy: If targetPort is specified, we MUST connect to it or fail.
@@ -874,11 +903,15 @@ async function initCDP(targetPort = null) {
             try { cdpConnection.ws.close(); } catch (e) { }
         }
 
-        // Connect
-        cdpConnection = await connectCDP(target.url);
+        // Connect using the first available target URL if exists
+        const connectionUrl = target.url || (target.targets && target.targets[0] ? target.targets[0].url : null);
+        if (!connectionUrl) throw new Error("No target URL found for instance");
 
-        // Update active port ONLY after success
+        cdpConnection = await connectCDP(connectionUrl);
+
+        // Update active port and title ONLY after success
         activePort = target.port;
+        activeTitle = target.title;
 
         // Force refresh caches
         lastSnapshot = null;
@@ -968,6 +1001,8 @@ async function startPolling(wss) {
                     if (client.readyState === WebSocket.OPEN) {
                         client.send(JSON.stringify({
                             type: 'snapshot_update',
+                            port: activePort,
+                            title: activeTitle,
                             timestamp: new Date().toISOString()
                         }));
                     }
@@ -1027,10 +1062,16 @@ async function createServer() {
     app.use(express.json());
     app.use(cookieParser('antigravity_secret_key_1337'));
 
-    // Ngrok Bypass Middleware
+    // Simplified CORS + Ngrok Bypass Middleware
     app.use((req, res, next) => {
-        // Tell ngrok to skip the "visit" warning for API requests
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, ngrok-skip-browser-warning');
         res.setHeader('ngrok-skip-browser-warning', 'true');
+
+        if (req.method === 'OPTIONS') {
+            return res.sendStatus(200);
+        }
         next();
     });
 
@@ -1144,13 +1185,10 @@ async function createServer() {
         }
     });
 
-    // Debug UI Endpoint
+    // Debug UI Endpoint (Privacy Fix: Removed console.log of UI tree)
     app.get('/debug-ui', async (req, res) => {
         if (!cdpConnection) return res.status(503).json({ error: 'CDP not connected' });
         const uiTree = await inspectUI(cdpConnection);
-        console.log('--- UI TREE ---');
-        console.log(uiTree);
-        console.log('---------------');
         res.type('json').send(uiTree);
     });
 
@@ -1191,13 +1229,70 @@ async function createServer() {
 
         const result = await injectMessage(cdpConnection, message);
 
-        // Always return 200 - the message usually goes through even if CDP reports issues
-        // The client will refresh and see if the message appeared
         res.json({
             success: result.ok !== false,
             method: result.method || 'attempted',
             details: result
         });
+    });
+
+    // --- Slot & Instance Management ---
+    app.get('/slots', async (req, res) => {
+        try {
+            const instances = await findAllInstances();
+            const slots = PORTS.map(port => {
+                const inst = instances.find(i => i.port === port);
+                return { port, running: !!inst, title: inst ? inst.title : `Slot ${port}` };
+            });
+            res.json({ slots });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    app.post('/instance/start', async (req, res) => {
+        try {
+            const { port } = req.body;
+            const result = await spawnInstance(port);
+            res.json(result);
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    app.post('/instance/stop', async (req, res) => {
+        try {
+            const { port } = req.body;
+            const result = await killInstance(port);
+            res.json(result);
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    app.post('/instance/kill-all', async (req, res) => {
+        try {
+            for (const port of PORTS) {
+                await killInstance(port);
+            }
+            res.json({ success: true });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    // Diagnostic Monitor Page
+    app.get('/debug', (req, res) => {
+        try {
+            const monitorPath = join(__dirname, 'scripts', 'send_monitor.html');
+            if (fs.existsSync(monitorPath)) {
+                res.sendFile(monitorPath);
+            } else {
+                res.status(404).send('Monitor file not found in scripts/send_monitor.html');
+            }
+        } catch (e) {
+            res.status(500).send('Error loading monitor: ' + e.message);
+        }
     });
 
     // WebSocket connection with Auth check
@@ -1238,6 +1333,33 @@ async function createServer() {
         }
 
         console.log('📱 Client connected (Authenticated)');
+
+        ws.on('message', async (data) => {
+            try {
+                const msg = JSON.parse(data);
+                if (msg.type === 'switch_port') {
+                    const port = parseInt(msg.port);
+                    console.log(`📡 Client requested switch to Port ${port}`);
+
+                    try {
+                        await initCDP(port);
+                        // Notify success
+                        ws.send(JSON.stringify({
+                            type: 'port_switched',
+                            port: activePort,
+                            success: true
+                        }));
+                    } catch (e) {
+                        ws.send(JSON.stringify({
+                            type: 'error',
+                            message: `Switch failed: ${e.message}`
+                        }));
+                    }
+                }
+            } catch (e) {
+                console.error('WS Message Error:', e.message);
+            }
+        });
 
         ws.on('close', () => {
             console.log('📱 Client disconnected');
@@ -1283,6 +1405,7 @@ async function main() {
             if (!cdpConnection) return res.json({ mode: 'Unknown', model: 'Unknown', activePort });
             const result = await getAppState(cdpConnection);
             result.activePort = activePort;
+            result.title = activeTitle;
             res.json(result);
         });
 

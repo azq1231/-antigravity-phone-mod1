@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Antigravity 訊息監控中心</title>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-hover: #4f46e5;
+            --bg: #0f172a;
+            --card-bg: rgba(30, 41, 59, 0.7);
+            --text: #f8fafc;
+            --text-muted: #94a3b8;
+            --success: #22c55e;
+            --error: #ef4444;
+            --warning: #f59e0b;
+            --border: rgba(255, 255, 255, 0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg);
+            background-image:
+                radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.15) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(168, 85, 247, 0.15) 0px, transparent 50%);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            overflow-x: hidden;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 600px;
+            z-index: 10;
+        }
+
+        .glass-card {
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            padding: 32px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            font-weight: 700;
+            background: linear-gradient(to right, #818cf8, #c084fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 8px;
+        }
+
+        .header p {
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+
+        .setup-section {
+            background: rgba(15, 23, 42, 0.5);
+            border-radius: 16px;
+            padding: 16px;
+            margin-bottom: 24px;
+            border: 1px solid var(--border);
+        }
+
+        .input-group {
+            display: flex;
+            gap: 12px;
+            margin-top: 8px;
+        }
+
+        input {
+            flex: 1;
+            background: #1e293b;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 10px 14px;
+            color: white;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        input:focus {
+            border-color: var(--primary);
+        }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .status-box {
+            padding: 16px;
+            border-radius: 16px;
+            background: rgba(15, 23, 42, 0.4);
+            border: 1px solid var(--border);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .status-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 4px;
+        }
+
+        .status-value {
+            font-size: 16px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #475569;
+        }
+
+        .status-box.ok .dot {
+            background: var(--success);
+            box-shadow: 0 0 10px var(--success);
+        }
+
+        .status-box.error .dot {
+            background: var(--error);
+            box-shadow: 0 0 10px var(--error);
+        }
+
+        .status-box.warning .dot {
+            background: var(--warning);
+            box-shadow: 0 0 10px var(--warning);
+        }
+
+        .btn {
+            width: 100%;
+            padding: 14px;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+            box-shadow: 0 4px 14px 0 rgba(99, 102, 241, 0.39);
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-hover);
+            transform: translateY(-1px);
+            box-shadow: 0 6px 20px rgba(99, 102, 241, 0.45);
+        }
+
+        .btn-primary:active {
+            transform: translateY(0);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .log-panel {
+            margin-top: 24px;
+            border-radius: 16px;
+            background: #020617;
+            border: 1px solid var(--border);
+            overflow: hidden;
+        }
+
+        .log-header {
+            padding: 8px 16px;
+            background: rgba(255, 255, 255, 0.05);
+            font-size: 12px;
+            color: var(--text-muted);
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .log-content {
+            padding: 16px;
+            height: 200px;
+            overflow-y: auto;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+
+        .log-entry {
+            margin-bottom: 6px;
+        }
+
+        .log-time {
+            color: #475569;
+            margin-right: 8px;
+        }
+
+        .log-type-info {
+            color: #60a5fa;
+        }
+
+        .log-type-success {
+            color: #4ade80;
+        }
+
+        .log-type-error {
+            color: #f87171;
+        }
+
+        .log-type-warning {
+            color: #fbbf24;
+        }
+
+        .pulse {
+            animation: pulse-animation 2s infinite;
+        }
+
+        @keyframes pulse-animation {
+            0% {
+                box-shadow: 0 0 0 0px rgba(99, 102, 241, 0.4);
+            }
+
+            100% {
+                box-shadow: 0 0 0 20px rgba(99, 102, 241, 0);
+            }
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="glass-card">
+            <div class="header">
+                <h1>AI 訊息發送監控</h1>
+                <p>Diagnostic Dashboard 2.0</p>
+            </div>
+
+            <div class="setup-section">
+                <div class="status-label">伺服器位置設定</div>
+                <div class="input-group">
+                    <input type="text" id="serverHost" placeholder="例如: localhost" value="localhost">
+                    <input type="text" id="serverPort" placeholder="Port" value="3004" style="flex: 0 0 80px;">
+                </div>
+            </div>
+
+            <div class="status-grid">
+                <div class="status-box" id="serverBox">
+                    <div class="status-label">伺服器狀態</div>
+                    <div class="status-value">
+                        <div class="dot"></div> <span id="serverTxt">檢查中...</span>
+                    </div>
+                </div>
+                <div class="status-box" id="cdpBox">
+                    <div class="status-label">CDP 橋接器</div>
+                    <div class="status-value">
+                        <div class="dot"></div> <span id="cdpTxt">檢查中...</span>
+                    </div>
+                </div>
+            </div>
+
+            <button class="btn btn-primary" id="testBtn" onclick="runDiagnostic()">
+                🚀 執行發送診斷
+            </button>
+
+            <div class="log-panel">
+                <div class="log-header">
+                    <span>系統日誌</span>
+                    <span id="logCounter">0 條記錄</span>
+                </div>
+                <div class="log-content" id="logContent"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const els = {
+            host: document.getElementById('serverHost'),
+            port: document.getElementById('serverPort'),
+            serverBox: document.getElementById('serverBox'),
+            cdpBox: document.getElementById('cdpBox'),
+            serverTxt: document.getElementById('serverTxt'),
+            cdpTxt: document.getElementById('cdpTxt'),
+            btn: document.getElementById('testBtn'),
+            logs: document.getElementById('logContent')
+        };
+
+        let logCount = 0;
+
+        function addLog(msg, type = 'info') {
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            const time = new Date().toLocaleTimeString('zh-TW', { hour12: false });
+            entry.innerHTML = `<span class="log-time">${time}</span><span class="log-type-${type}">${msg}</span>`;
+            els.logs.appendChild(entry);
+            els.logs.scrollTop = els.logs.scrollHeight;
+            logCount++;
+            document.getElementById('logCounter').innerText = `${logCount} 條記錄`;
+        }
+
+        async function checkHealth() {
+            const baseUrl = `http://${els.host.value}:${els.port.value}`;
+            try {
+                // Try port 3004/snapshot
+                const res = await fetch(`${baseUrl}/snapshot?port=9000`, {
+                    mode: 'cors',
+                    headers: { 'ngrok-skip-browser-warning': 'true' }
+                });
+
+                if (res.ok) {
+                    els.serverBox.className = 'status-box ok';
+                    els.serverTxt.innerText = '連線正常';
+                    els.cdpBox.className = 'status-box ok';
+                    els.cdpTxt.innerText = '已連線';
+                } else if (res.status === 503) {
+                    els.serverBox.className = 'status-box ok';
+                    els.serverTxt.innerText = '伺服器 OK';
+                    els.cdpBox.className = 'status-box error';
+                    els.cdpTxt.innerText = 'Port 9000 斷開';
+                } else {
+                    throw new Error('Status ' + res.status);
+                }
+            } catch (e) {
+                els.serverBox.className = 'status-box error';
+                els.serverTxt.innerText = '連線失敗';
+                els.cdpBox.className = 'status-box error';
+                els.cdpTxt.innerText = '未偵測到';
+                return false;
+            }
+            return true;
+        }
+
+        async function runDiagnostic() {
+            els.btn.disabled = true;
+            els.btn.innerHTML = '⚡ 診斷中...';
+            addLog('--- 開始診斷程序 ---', 'warning');
+
+            const isAlive = await checkHealth();
+            if (!isAlive) {
+                addLog('⚠️ 無法連線至伺服器，請確認伺服器已啟動', 'error');
+                addLog('💡 如果您是透過 Tailscale 訪問，請修改上方 Host', 'info');
+                els.btn.disabled = false;
+                els.btn.innerHTML = '🚀 重新診斷';
+                return;
+            }
+
+            const testMsg = "Diagnostic Test: " + Math.random().toString(36).substring(7);
+            const baseUrl = `http://${els.host.value}:${els.port.value}`;
+
+            addLog(`正在發送測試訊息: "${testMsg}"`, 'info');
+
+            try {
+                const startTime = Date.now();
+                const res = await fetch(`${baseUrl}/send?port=9000`, {
+                    method: 'POST',
+                    mode: 'cors',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'ngrok-skip-browser-warning': 'true'
+                    },
+                    body: JSON.stringify({ message: testMsg })
+                });
+
+                const data = await res.json();
+                const duration = Date.now() - startTime;
+
+                addLog(`回應時間: ${duration}ms`, 'success');
+
+                if (data.success) {
+                    addLog('✅ 發送成功! Antigravity 已接收', 'success');
+                    addLog(`方法: ${data.method}`, 'info');
+                } else {
+                    const error = data.details?.error || data.details?.reason || '未知錯誤';
+                    addLog(`❌ 發送失敗: ${error}`, 'error');
+
+                    if (error === 'busy') {
+                        addLog('💡 建議: AI 正在生成中，請稍候重試', 'warning');
+                    } else if (error === 'editor_not_found') {
+                        addLog('💡 建議: 請將 Antigravity 切換至對話視窗', 'warning');
+                    }
+                }
+            } catch (e) {
+                addLog(`❌ 網路請求失敗: ${e.message}`, 'error');
+                addLog('💡 可能是 CORS 或本機網路攔截', 'error');
+            } finally {
+                els.btn.disabled = false;
+                els.btn.innerHTML = '🚀 執行發送診斷';
+            }
+        }
+
+        // 自動偵測目前的 Host
+        if (window.location.hostname && window.location.hostname !== 'localhost') {
+            els.host.value = window.location.hostname;
+        }
+
+        addLog('系統初始化完成', 'success');
+        addLog(`目前 Host 設定: ${els.host.value}`, 'info');
+        checkHealth();
+        setInterval(checkHealth, 10000);
+    </script>
+</body>
+
+</html>

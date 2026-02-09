@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>前端發送測試</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #1e293b;
+            color: #e2e8f0;
+        }
+
+        .test-box {
+            background: #334155;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        input,
+        button {
+            width: 100%;
+            padding: 12px;
+            margin: 10px 0;
+            border-radius: 6px;
+            border: 1px solid #475569;
+            font-size: 16px;
+        }
+
+        input {
+            background: #1e293b;
+            color: #e2e8f0;
+        }
+
+        button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #2563eb;
+        }
+
+        button:disabled {
+            background: #64748b;
+            cursor: not-allowed;
+        }
+
+        #result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 6px;
+            background: #0f172a;
+            white-space: pre-wrap;
+            font-family: monospace;
+            font-size: 14px;
+        }
+
+        .success {
+            color: #10b981;
+        }
+
+        .error {
+            color: #ef4444;
+        }
+
+        .info {
+            color: #3b82f6;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>🔍 前端訊息發送測試</h1>
+
+    <div class="test-box">
+        <h3>測試參數</h3>
+        <label>伺服器 Port:</label>
+        <input type="number" id="serverPort" value="3004">
+
+        <label>Antigravity Port:</label>
+        <input type="number" id="agPort" value="9000">
+
+        <label>測試訊息:</label>
+        <input type="text" id="message" value="前端測試訊息">
+
+        <button id="sendBtn" onclick="testSend()">發送測試訊息</button>
+    </div>
+
+    <div id="result"></div>
+
+    <script>
+        const resultDiv = document.getElementById('result');
+        const sendBtn = document.getElementById('sendBtn');
+
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString('zh-TW');
+            const line = `[${timestamp}] ${message}\n`;
+            const span = document.createElement('span');
+            span.className = type;
+            span.textContent = line;
+            resultDiv.appendChild(span);
+            resultDiv.scrollTop = resultDiv.scrollHeight;
+        }
+
+        async function testSend() {
+            const serverPort = document.getElementById('serverPort').value;
+            const agPort = document.getElementById('agPort').value;
+            const message = document.getElementById('message').value;
+
+            if (!message.trim()) {
+                log('❌ 訊息不能為空', 'error');
+                return;
+            }
+
+            sendBtn.disabled = true;
+            resultDiv.innerHTML = '';
+
+            log('📤 開始發送測試...', 'info');
+            log(`   伺服器: http://localhost:${serverPort}`, 'info');
+            log(`   目標 Port: ${agPort}`, 'info');
+            log(`   訊息: "${message}"`, 'info');
+
+            try {
+                const url = `http://localhost:${serverPort}/send?port=${agPort}`;
+                log(`\n🌐 發送 POST 請求到: ${url}`, 'info');
+
+                const startTime = Date.now();
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ message })
+                });
+
+                const elapsed = Date.now() - startTime;
+                log(`⏱️  回應時間: ${elapsed}ms`, 'info');
+                log(`📊 狀態碼: ${response.status} ${response.statusText}`, 'info');
+
+                const data = await response.json();
+                log('\n📦 回應內容:', 'info');
+                log(JSON.stringify(data, null, 2), 'info');
+
+                if (response.ok && data.success) {
+                    log('\n✅ 訊息發送成功!', 'success');
+                    log(`   方法: ${data.method}`, 'success');
+                    if (data.details) {
+                        log(`   詳情: ${JSON.stringify(data.details)}`, 'info');
+                    }
+                } else {
+                    log('\n❌ 訊息發送失敗', 'error');
+                    if (data.details) {
+                        log(`   原因: ${data.details.reason || data.details.error}`, 'error');
+
+                        // 提供診斷建議
+                        if (data.details.reason === 'busy') {
+                            log('\n💡 診斷: Antigravity 正在生成回應', 'info');
+                            log('   建議: 等待當前回應完成後再試', 'info');
+                        } else if (data.details.error === 'editor_not_found') {
+                            log('\n💡 診斷: 找不到編輯器元素', 'info');
+                            log('   建議: 檢查 Antigravity 介面是否正常', 'info');
+                        } else if (data.details.reason === 'no_context') {
+                            log('\n💡 診斷: CDP 執行上下文遺失', 'info');
+                            log('   建議: 重新啟動 Antigravity', 'info');
+                        }
+                    }
+                }
+
+            } catch (error) {
+                log(`\n❌ 請求失敗: ${error.message}`, 'error');
+                log(`   錯誤類型: ${error.name}`, 'error');
+
+                if (error.message.includes('Failed to fetch')) {
+                    log('\n💡 可能原因:', 'info');
+                    log('   1. 伺服器未運行', 'info');
+                    log('   2. Port 設定錯誤', 'info');
+                    log('   3. CORS 問題 (需從同源訪問)', 'info');
+                }
+            } finally {
+                sendBtn.disabled = false;
+            }
+        }
+
+        // 允許 Enter 鍵發送
+        document.getElementById('message').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                testSend();
+            }
+        });
+
+        // 初始化訊息
+        log('🚀 測試工具已就緒', 'success');
+        log('請點擊「發送測試訊息」按鈕開始測試\n', 'info');
+    </script>
+</body>
+
+</html>

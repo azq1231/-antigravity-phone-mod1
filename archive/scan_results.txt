@@ -1,0 +1,16 @@
+Scanning Port 9000...
+  [page] "Launchpad" | URL: vscode-file://vscode-app/d:/Program%20Files/Antigravity/resources/app/out/vs/code/electron-browser/w
+  [page] "antigravity_phone_chat_ori - Antigravity - Antigravity Quota Monitor" | URL: vscode-file://vscode-app/d:/Program%20Files/Antigravity/resources/app/out/vs/code/electron-browser/w
+  [iframe] "vscode-webview://04bqbbml2n3u3kp2cl464430f2l0otvvicgk6h1s1812nermrf13/index.html?id=e90502ef-206b-4b0d-bfab-f3d35c61d392&amp;parentId=1&amp;origin=cd698ac5-523f-4222-abbd-27dff16bb0c3&amp;swVersion=4&amp;extensionId=jlcodes.antigravity-cockpit&amp;platform=electron&amp;vscode-resource-base-authority=vscode-resource.vscode-cdn.net&amp;parentOrigin=vscode-file%3A%2F%2Fvscode-app" | URL: vscode-webview://04bqbbml2n3u3kp2cl464430f2l0otvvicgk6h1s1812nermrf13/index.html?id=e90502ef-206b-4b
+  [service_worker] "Service Worker vscode-webview://1odueg9pa0cj2ap81ber963ibamteoaigd4080fvcpqdp5l3ds4q/service-worker.js?v=4&amp;vscode-resource-base-authority=vscode-resource.vscode-cdn.net&amp;remoteAuthority=" | URL: vscode-webview://1odueg9pa0cj2ap81ber963ibamteoaigd4080fvcpqdp5l3ds4q/service-worker.js?v=4&vscode-r
+  [service_worker] "Service Worker vscode-webview://04bqbbml2n3u3kp2cl464430f2l0otvvicgk6h1s1812nermrf13/service-worker.js?v=4&amp;vscode-resource-base-authority=vscode-resource.vscode-cdn.net&amp;remoteAuthority=" | URL: vscode-webview://04bqbbml2n3u3kp2cl464430f2l0otvvicgk6h1s1812nermrf13/service-worker.js?v=4&vscode-r
+  [worker] "" | URL: 
+  [worker] "" | URL: 
+Scanning Port 9001...
+  [page] "Launchpad" | URL: vscode-file://vscode-app/d:/Program%20Files/Antigravity/resources/app/out/vs/code/electron-browser/w
+  [page] "onlinenovell - Antigravity - Walkthrough" | URL: vscode-file://vscode-app/d:/Program%20Files/Antigravity/resources/app/out/vs/code/electron-browser/w
+  [worker] "" | URL: 
+Scanning Port 9002...
+  Port 9002 failed: fetch failed
+Scanning Port 9003...
+  Port 9003 failed: fetch failed

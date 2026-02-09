@@ -114,20 +114,38 @@ function renderSnapshot(data) {
         const style = document.createElement('style');
         style.id = 'v4-styles';
         style.textContent = `
-            #ag-chat-root, #cascade { 
+            #ag-chat-root, #cascade, #cascade * { 
                 background: transparent !important; 
                 color: #ffffff !important; 
                 font-family: 'Inter', 'Microsoft JhengHei', sans-serif !important; 
-                font-weight: 500 !important;
                 -webkit-font-smoothing: antialiased !important;
-                height: auto !important; 
-                overflow: visible !important; 
+                position: static !important; /* Force natural flow, kill absolute chaos */
+                width: auto !important;
+                height: auto !important;
+                min-height: 0 !important;
+                max-width: 100vw !important;
+                border: none !important;
+                box-shadow: none !important;
+                transform: none !important;
+            }
+            #ag-chat-root, #cascade {
+                display: flex !important;
+                flex-direction: column !important;
+                gap: 8px !important;
+            }
+            /* Global kill for UI elements that leak through */
+            #cascade button, #cascade svg, #cascade input, #cascade textarea,
+            #cascade [role="button"], #cascade [class*="toolbar"], #cascade [class*="menu"] {
+                display: none !important;
             }
             #ag-chat-root p, #cascade p, #ag-chat-root span, #cascade span, #cascade div { 
                 color: #ffffff !important; 
                 opacity: 1 !important;
-                text-shadow: 0 1px 2px rgba(0,0,0,0.3); /* Subtle shadow for contrast */
+                line-height: 1.6 !important;
+                font-size: 15px !important;
             }
+            #ag-chat-root { margin-top: 0 !important; padding: 0 !important; }
+            
             #ag-chat-root a, #cascade a { color: #60a5fa !important; font-weight: 600 !important; }
             ::-webkit-scrollbar { width: 6px !important; }
             ::-webkit-scrollbar-thumb { background: #475569 !important; border-radius: 10px; }
@@ -353,7 +371,7 @@ document.querySelector('.setting-chip:nth-child(3)').onclick = async () => { // 
                     // Actions
                     fetchAppState();
                     loadSnapshot();
-                    document.querySelector('.setting-chip:nth-child(3)').click(); // Refresh modal
+                    modalOverlay.style.display = 'none'; // Auto-close for better UX
                 };
                 controls.appendChild(switchBtn);
             }
