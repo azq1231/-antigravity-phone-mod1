@@ -17,10 +17,13 @@ export async function captureSnapshot(cdpList) {
         // 1. Destructive Removal: All UI Controls
         const killList = [
             'button', 'svg', 'input', 'textarea', 'form', 'nav', 'header', 'footer',
-            '[role="button"]', '[role="menu"]', '[role="dialog"]',
+            '[role="button"]', '[role="menu"]', '[role="dialog"]', '[role="tooltip"]',
             '[class*="toolbar"]', '[class*="footer"]', '[class*="header"]',
+            '[class*="actions"]', '[class*="status"]', '[class*="menu"]',
+            '[class*="icon"]', '.lucide', 'i', 'span[class*="icon"]',
             '[class*="model-selector"]', '[class*="prompt"]', '[class*="input"]',
-            '[id^="headlessui-"]', '.splash', '.decor'
+            '[id^="headlessui-"]', '.splash', '.decor', '[class*="hover-"]',
+            '[class*="overlay"]'
         ];
         killList.forEach(sel => {
             clone.querySelectorAll(sel).forEach(el => el.remove());
@@ -49,11 +52,13 @@ export async function captureSnapshot(cdpList) {
         // 3. Layout Normalization & Ghost Height Removal
         const cleanupStyles = (el) => {
             if (el.style) {
-                // Remove explicit pixel heights that cause ghost scrolling
                 if (el.style.height && el.style.height.includes('px')) el.style.height = 'auto';
                 if (el.style.minHeight && el.style.minHeight.includes('px')) el.style.minHeight = '0';
-                // Kill padding that might be bloating the bottom
                 el.style.paddingBottom = '0';
+                el.style.width = '100%';
+                el.style.maxWidth = 'none';
+                el.style.overflowX = 'hidden';
+                if (window.getComputedStyle(el).position === 'fixed') el.style.position = 'relative';
             }
             Array.from(el.children).forEach(cleanupStyles);
         };
@@ -64,6 +69,9 @@ export async function captureSnapshot(cdpList) {
         clone.style.margin = '0';
         clone.style.height = 'auto';
         clone.style.minHeight = '0';
+        clone.style.width = '100%';
+        clone.style.maxWidth = 'none';
+        clone.style.overflowX = 'hidden';
 
         const html = clone.outerHTML;
         const scrollContainer = cascade.querySelector('.overflow-y-auto, [data-scroll-area]') || cascade;
@@ -155,6 +163,167 @@ export async function injectMessage(cdpList, text, force = false) {
         }
     }
     return { ok: false, error: "no_editor_found" };
+}
+
+export async function injectImage(cdpList, base64Data, text = null) {
+    const safeText = JSON.stringify(text || "");
+    const results = [];
+
+    for (const cdp of cdpList) {
+        // VS Code and similar Electron apps have multiple contexts per page
+        const cdpContexts = cdp.contexts.length > 0 ? cdp.contexts : [{ id: undefined }];
+
+        for (const ctx of cdpContexts) {
+            const EXPRESSION = `(async () => {
+                const logs = [];
+                function log(msg) { logs.push(msg); }
+
+                try {
+                    // 1. Locate Target
+                    let editors = [...document.querySelectorAll('[data-lexical-editor="true"][contenteditable="true"]')].filter(el => el.offsetParent !== null);
+                    let target = editors.at(-1);
+
+                    if (!target) {
+                        let candidates = Array.from(document.querySelectorAll('[contenteditable="true"], textarea, [role="textbox"]'))
+                            .filter(el => el.offsetWidth > 0 && el.offsetHeight > 0);
+                        candidates.sort((a, b) => {
+                            const aLex = a.hasAttribute('data-lexical-editor') ? 1 : 0;
+                            const bLex = b.hasAttribute('data-lexical-editor') ? 1 : 0;
+                            if (aLex !== bLex) return bLex - aLex;
+                            return (b.offsetWidth * b.offsetHeight) - (a.offsetWidth * a.offsetHeight);
+                        });
+                        target = candidates[0];
+                    }
+
+                    if (!target) return { ok: false, error: "no_editor_in_context", logs: logs };
+
+                    log('Target: ' + target.tagName + ' cls: ' + target.className.substring(0, 50));
+                    
+                    target.focus();
+                    try { 
+                        const rect = target.getBoundingClientRect();
+                        const x = rect.left + rect.width / 2;
+                        const y = rect.top + rect.height / 2;
+                        target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: x, clientY: y }));
+                        target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: x, clientY: y }));
+                        target.click(); 
+                    } catch(e) {}
+
+                    // 2. Prepare Blob & DataTransfer
+                    const parts = "${base64Data}".split(',');
+                    const byteString = atob(parts[ parts.length - 1 ]);
+                    const mimeString = parts[0].split(':')[1].split(';')[0];
+                    const ab = new ArrayBuffer(byteString.length);
+                    const ia = new Uint8Array(ab);
+                    for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
+                    const blob = new Blob([ab], {type: mimeString});
+                    const file = new File([blob], "upload.png", { type: mimeString });
+                    
+                    const dt = new DataTransfer();
+                    dt.items.add(file);
+                    // Critical for some apps: ensure files property is populated
+                    try {
+                        Object.defineProperty(dt, 'files', { value: [file], writable: false });
+                    } catch(e) { log('Could not define dt.files: ' + e.message); }
+
+                    if (${!!text}) dt.setData('text/plain', ${safeText});
+                    
+                    // 3. Injection Sequence
+                    const getStatus = () => ({
+                        imgs: document.querySelectorAll('img').length,
+                        chips: document.querySelectorAll('[class*="chip"], [class*="Image"], [class*="image"]').length,
+                        children: target.children.length
+                    });
+                    const before = getStatus();
+                    
+                    log('Dispatching Paste...');
+                    target.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true, composed: true }));
+                    
+                    try {
+                        target.dispatchEvent(new InputEvent('beforeinput', {
+                            dataTransfer: dt, inputType: 'insertFromPaste', bubbles: true, cancelable: true, composed: true
+                        }));
+                    } catch(e) {}
+
+                    await new Promise(r => setTimeout(r, 600));
+                    
+                    if (getStatus().children <= before.children && getStatus().imgs <= before.imgs) {
+                        log('Paste failed, trying Drop...');
+                        target.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true, composed: true }));
+                        await new Promise(r => setTimeout(r, 600));
+                    }
+
+                    // Strategy F: Direct DOM insertion (Bypasses TrustedHTML for simple elements)
+                    if (getStatus().children <= before.children && getStatus().imgs <= before.imgs) {
+                        log('Events failed, attempting manual insertion...');
+                        try {
+                            const img = document.createElement('img');
+                            img.src = "${base64Data}";
+                            img.style.maxWidth = '100px';
+                            img.setAttribute('data-injected', 'true');
+                            
+                            const selection = window.getSelection();
+                            if (selection.rangeCount > 0) {
+                                const range = selection.getRangeAt(0);
+                                range.deleteContents();
+                                range.insertNode(img);
+                                log('Inserted via Range API');
+                            } else {
+                                target.appendChild(img);
+                                log('Appended to target');
+                            }
+                        } catch(e) { log('Manual insertion failed: ' + e.message); }
+                    }
+
+                    const after = getStatus();
+                    log('Status change - Imgs: ' + (after.imgs - before.imgs) + ', Children: ' + (after.children - before.children));
+
+                    // 4. Send Button Logic
+                    log('Waiting for processing...');
+                    await new Promise(r => setTimeout(r, 2000)); 
+                    
+                    const buttons = Array.from(document.querySelectorAll('button, [role="button"], a.button, [title*="Send"], [aria-label*="Send"], [id*="send"], [data-testid*="send"]'));
+                    const findSend = (b) => {
+                        const txt = (b.innerText || b.getAttribute('aria-label') || b.title || b.id || b.getAttribute('data-testid') || '').toLowerCase();
+                        if (/continue|繼續|stop|停止/i.test(txt)) return false;
+                        if (/send|submit|發送|送出|tweet/i.test(txt)) return true;
+                        // Icon detection
+                        return b.querySelector('svg.lucide-arrow-right, svg.lucide-arrow-up, svg.lucide-send, .lucide-send, svg[class*="send"], svg.lucide-zap');
+                    };
+                    
+                    const btn = buttons.find(findSend);
+                    if (btn && btn.offsetParent !== null) {
+                        btn.click();
+                        log('Clicked: ' + (btn.innerText || btn.getAttribute('aria-label') || btn.tagName));
+                        return { ok: true, method: "click", logs: logs };
+                    } else {
+                        log('Enter fallback');
+                        target.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter", code: "Enter", keyCode: 13, which: 13 }));
+                        return { ok: true, method: "enter", logs: logs };
+                    }
+
+                } catch (e) {
+                    return { ok: false, error: e.toString(), logs: logs };
+                }
+            })()`;
+
+            try {
+                const evalParams = { expression: EXPRESSION, returnByValue: true, awaitPromise: true };
+                if (ctx.id !== undefined) evalParams.contextId = ctx.id;
+
+                const res = await cdp.call("Runtime.evaluate", evalParams);
+                const val = res.result.value;
+                if (val && (val.ok || val.error !== "no_editor_in_context")) {
+                    return val; // Found a valid editor or hit a real error, stop here
+                }
+                if (val) results.push(val);
+            } catch (e) {
+                // Context might be gone
+            }
+        }
+    }
+
+    return { ok: false, error: "no_editor_found_all_contexts", results: results };
 }
 
 export async function getAppState(cdpList) {
