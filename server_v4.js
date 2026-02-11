@@ -30,10 +30,21 @@ async function createServer() {
     const wss = new WebSocketServer({ server });
 
     app.use(compression());
-    app.use(express.json());
+    app.use(express.json({ limit: '50mb' }));
+    app.use(express.urlencoded({ limit: '50mb', extended: true }));
     app.use(cookieParser('antigravity_v4_secret'));
 
     app.use('/', apiRoutes);
+
+    // Global Error Handler for Debugging
+    app.use((err, req, res, next) => {
+        console.error('💥 [Server Error]:', err.stack);
+        res.status(err.status || 500).json({
+            ok: false,
+            error: err.message,
+            stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+        });
+    });
 
     app.get('/', (req, res) => res.sendFile(join(__dirname, 'public', 'index_v4.html')));
     app.use(express.static(join(__dirname, 'public')));

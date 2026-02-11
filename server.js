@@ -1091,7 +1091,7 @@ async function createServer() {
     AUTH_TOKEN = hashString(APP_PASSWORD + 'antigravity_salt');
 
     app.use(compression());
-    app.use(express.json());
+    app.use(express.json({ limit: '50mb' }));
     app.use(cookieParser('antigravity_secret_key_1337'));
 
     // Simplified CORS + Ngrok Bypass Middleware

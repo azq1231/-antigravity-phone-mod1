@@ -14,6 +14,8 @@ const modeText = document.getElementById('modeText');
 const modelText = document.getElementById('modelText');
 const modalOverlay = document.getElementById('modalOverlay');
 const modalList = document.getElementById('modalList');
+const imageInput = document.getElementById('imageInput');
+const attachBtn = document.getElementById('attachBtn');
 
 // State
 let ws = null;
@@ -24,6 +26,11 @@ let lastHash = '';
 let forceScrollToBottom = false;
 let userScrollLockUntil = 0;
 let pingTimeout = null;
+let pendingImage = null;
+
+console.log('[DEBUG] imageInput element:', imageInput);
+console.log('[DEBUG] attachBtn element:', attachBtn);
+console.log('[DEBUG] sendBtn element:', sendBtn);
 
 // Auth Helper
 async function fetchWithAuth(url, options = {}) {
@@ -199,9 +206,19 @@ function scrollToBottom() {
 
 // Messaging Logic (V3 Robust Retry)
 async function sendMessage(retryCount = 0) {
-    if (isSending && retryCount === 0) return;
+    console.log('[DEBUG] sendMessage called, retryCount:', retryCount, 'isSending:', isSending, 'pendingImage:', pendingImage ? 'exists' : 'null');
+    
+    if (isSending && retryCount === 0) {
+        console.log('[DEBUG] Blocked: isSending is true');
+        return;
+    }
     const msg = messageInput.value.trim();
-    if (!msg) return;
+    console.log('[DEBUG] msg:', msg, 'pendingImage:', pendingImage ? 'exists' : 'null');
+    
+    if (!msg && !pendingImage) {
+        console.log('[DEBUG] Blocked: no msg and no pendingImage');
+        return;
+    }
 
     if (retryCount === 0) {
         isSending = true;
@@ -209,51 +226,65 @@ async function sendMessage(retryCount = 0) {
         sendBtn.innerHTML = '<div class="loading-spinner"></div>';
         // Generate Idempotency Key
         window.currentMsgId = Date.now().toString(36) + Math.random().toString(36).substr(2);
-        console.log('[App] New Message ID:', window.currentMsgId);
     } else {
         sendBtn.innerHTML = `<span style="font-size:10px">Retry ${retryCount}/25</span>`;
         statusText.textContent = `⏳ Busy... (${retryCount}/25)`;
-        console.log('[App] Retrying Message ID:', window.currentMsgId);
     }
 
     try {
+        if (pendingImage) statusText.textContent = '📤 Uploading Image...';
+        else statusText.textContent = '🚀 Sending Message...';
+
+        const payload = { message: msg, msgId: window.currentMsgId };
+        if (pendingImage) payload.image = pendingImage;
+        
+        console.log('[DEBUG] Sending payload with image:', pendingImage ? 'yes' : 'no');
+
         const res = await fetchWithAuth(`/send?port=${currentViewingPort}&_t=${Date.now()}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: msg, msgId: window.currentMsgId })
+            body: JSON.stringify(payload)
         });
+
+        if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.error || `Server returned ${res.status}`);
+        }
+
         const data = await res.json();
 
         if (data.ok) {
             messageInput.value = '';
-            statusText.textContent = 'Live (V4)';
+            pendingImage = null; // Clear image
+            if (attachBtn) attachBtn.classList.remove('active');
+
+            statusText.textContent = `Live (${cachedVLabel})`;
             sendBtn.innerHTML = 'Send';
             sendBtn.disabled = false;
             isSending = false;
             forceScrollToBottom = true;
-            // Quick refreshes
             setTimeout(() => fetchAppState(), 500);
             return;
-        }
-
-        // One-shot attempt (User Request: Do not retry)
-        /*
-        // Retry Logic Removed
-        if ((data.reason === 'busy' || data.error === 'editor_not_found') && retryCount < 25) { ... } 
-        */
-
-        if (!data.ok) {
-            console.warn('[App] Send failed:', data.error || data.reason);
-            // Optimistic behavior: Don't alert if busy/editor_not_found as user assumes success
-            // But let's keep status text updated
-            statusText.textContent = `Push Failed: ${data.error || data.reason} `;
-            // Intentionally NO alert and NO resetSendState immediately to let user see status
-            // Actually, we must enable button again
-            resetSendState();
+        } else {
+            throw new Error(data.error || 'Server processing failed');
         }
     } catch (e) {
-        console.error(e);
-        statusText.textContent = 'Network Error';
+        console.error('[App] Send failed:', e);
+
+        // Auto-fix: If 9001 is broken, force back to 9000
+        if (e.message.includes('9001') || currentViewingPort === 9001) {
+            console.warn('[System] Port 9001 failed, rolling back to 9000');
+            currentViewingPort = 9000;
+            localStorage.setItem('lastViewingPort', 9000);
+            statusText.textContent = '♻️ Auto-switching to Port 9000...';
+            setTimeout(() => {
+                alert('Detect Port 9001 issue. System has auto-switched you back to 9000. Please try again.');
+                location.reload();
+            }, 500);
+        } else {
+            statusText.textContent = `❌ ${e.message}`;
+            alert(`Send failed: ${e.message}`);
+        }
         resetSendState();
     }
 }
@@ -448,7 +479,16 @@ document.querySelector('.setting-chip:nth-child(3)').onclick = async () => { // 
 };
 
 // --- Event Listeners ---
-sendBtn.onclick = () => sendMessage(0);
+console.log('[DEBUG] sendBtn element:', sendBtn);
+if (sendBtn) {
+    sendBtn.onclick = () => {
+        console.log('[DEBUG] sendBtn clicked!');
+        sendMessage(0);
+    };
+} else {
+    console.error('[DEBUG] sendBtn element NOT FOUND!');
+}
+
 messageInput.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(0); } };
 refreshBtn.onclick = () => { location.reload(); };
 chatContainer.onscroll = () => {
@@ -460,6 +500,50 @@ document.getElementById('scrollToBottom').onclick = () => {
     scrollToBottom();
     forceScrollToBottom = true; // Temporary lock
 };
+
+// Image Upload Event Listener
+if (imageInput) {
+    imageInput.addEventListener('change', (e) => {
+        console.log('[DEBUG] change event triggered!');
+        const file = e.target.files[0];
+        console.log('[DEBUG] selected file:', file);
+        if (!file) return;
+
+        // 立即顯示載入狀態
+        if (attachBtn) {
+            attachBtn.classList.add('active');
+            attachBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
+        }
+        statusText.textContent = '📷 Processing image...';
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            pendingImage = event.target.result;
+            console.log('[DEBUG] Image loaded, size:', Math.round(pendingImage.length / 1024), 'KB');
+            
+            // 恢復圖示並顯示完成狀態
+            if (attachBtn) {
+                attachBtn.classList.add('active');
+                attachBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
+            }
+            statusText.textContent = '📷 Image ready! Click Send to upload';
+            
+            // 3秒後恢復狀態文字
+            setTimeout(() => {
+                statusText.textContent = `Live (${cachedVLabel})`;
+            }, 3000);
+        };
+        reader.onerror = () => {
+            console.error('[App] Failed to read image file');
+            if (attachBtn) attachBtn.classList.remove('active');
+            statusText.textContent = '❌ Failed to read image';
+            alert('Failed to read image file');
+        };
+        reader.readAsDataURL(file);
+    });
+} else {
+    console.error('[DEBUG] imageInput element not found!');
+}
 
 // Start
 connectWebSocket();

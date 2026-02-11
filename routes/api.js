@@ -3,7 +3,7 @@ import fs from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { activeConnections, getOrConnectParams, findAllInstances } from '../core/cdp_manager.js';
-import { captureSnapshot, injectMessage, getAppState, setMode, setModel, injectScroll } from '../core/automation.js';
+import { captureSnapshot, injectMessage, getAppState, setMode, setModel, injectScroll, injectImage } from '../core/automation.js';
 import { spawnInstance, killInstance } from '../core/instance_manager.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -21,7 +21,7 @@ const processedMsgIds = new Map();
 
 router.post('/send', async (req, res) => {
     try {
-        const { message, msgId } = req.body;
+        const { message, msgId, image } = req.body;
         const port = parseInt(req.query.port) || 9000;
 
         if (msgId) {
@@ -33,11 +33,24 @@ router.post('/send', async (req, res) => {
         }
 
         const conn = await getOrConnectParams(port);
-        const result = await injectMessage(conn, message, req.query.force === 'true');
+
+        let result;
+        if (image) {
+            console.log('[API] Sending image upload...');
+            result = await injectImage(conn, image, message);
+            console.log('[API] Image injection result:', JSON.stringify({ ok: result.ok, error: result.error, method: result.method, logsCount: result.logs?.length }));
+            if (result.logs) result.logs.forEach(l => console.log('  [AUTO-LOG]', l));
+        } else {
+            result = await injectMessage(conn, message, req.query.force === 'true');
+            console.log('[API] Text injection result:', JSON.stringify(result));
+        }
 
         if (!result.ok && msgId) processedMsgIds.delete(msgId);
         res.json(result);
-    } catch (e) { res.status(503).json({ error: e.message }); }
+    } catch (e) {
+        console.error('[API] Error in /send:', e);
+        res.status(503).json({ error: e.message });
+    }
 });
 
 router.get('/snapshot', async (req, res) => {

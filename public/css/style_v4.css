@@ -327,6 +327,45 @@ textarea::-webkit-scrollbar {
     background: transparent;
 }
 
+#imageInput {
+    width: 36px;
+    height: 36px;
+    position: absolute;
+    opacity: 0;
+    cursor: pointer;
+    z-index: 10;
+}
+
+.attach-btn {
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    align-self: flex-end;
+    margin-bottom: 2px;
+    border-radius: 10px;
+}
+
+.attach-btn:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-main);
+}
+
+.attach-btn.active {
+    background: var(--accent);
+    color: white;
+    box-shadow: 0 0 15px rgba(37, 99, 235, 0.3);
+}
+
+.attach-btn svg {
+    width: 20px;
+    height: 20px;
+}
+
 .send-btn {
     background: transparent;
     border: none;
