@@ -2,129 +2,138 @@ import { simpleHash } from './utils.js';
 
 export async function captureSnapshot(cdpList) {
     const CAPTURE_SCRIPT = `(() => {
-        const findCascade = (root) => {
-            const selectors = [
-                '#conversation', '#chat', '#cascade',
-                '[class*="chat-container"]', '[class*="chat-panel"]',
-                '.react-scroll-to-bottom--css-jvyxe-1n7m0yu', // Specific to some Antigravity versions
-                '[data-testid="chat-history"]'
-            ];
+        try {
+            const body = document.body;
+            if (!body) return { error: 'No body' };
             
-            for (const sel of selectors) {
-                const el = root.querySelector(sel);
-                if (el) return el;
-            }
+            // 1. Try to find the best container
+            let target = document.querySelector('#conversation') || 
+                         document.querySelector('#chat') || 
+                         document.querySelector('#cascade') ||
+                         document.querySelector('main') ||
+                         document.querySelector('[role="main"]');
 
-            // Recursive Shadow DOM search
-            const allElements = root.querySelectorAll('*');
-            for (const el of allElements) {
-                if (el.shadowRoot) {
-                    const found = findCascade(el.shadowRoot);
-                    if (found) return found;
+            // If we found a target, use it. Otherwise, use body but indicate it's a fallback
+            const root = target || body;
+            
+            // 2. Capture CSS (Critical for styling)
+            // We iterate all stylesheets to get valid CSS rules
+            const rules = [];
+            try {
+                for (const sheet of document.styleSheets) {
+                    try {
+                        for (const rule of sheet.cssRules) {
+                            rules.push(rule.cssText);
+                        }
+                    } catch (e) { }
                 }
-            }
-            return null;
-        };
+            } catch(e) {}
+            const allCSS = rules.join('\\n');
 
-        const cascade = findCascade(document);
-        if (!cascade) return { error: 'cascade not found' };
-        
-        const clone = cascade.cloneNode(true);
-        
-        // 1. Destructive Removal: All UI Controls
-        const killList = [
-            'button', 'svg', 'input', 'textarea', 'form', 'nav', 'header', 'footer',
-            '[role="button"]', '[role="menu"]', '[role="dialog"]', '[role="tooltip"]',
-            '[class*="toolbar"]', '[class*="footer"]', '[class*="header"]',
-            '[class*="actions"]', '[class*="status"]', '[class*="menu"]',
-            '[class*="icon"]', '.lucide', 'i', 'span[class*="icon"]',
-            '[class*="model-selector"]', '[class*="prompt"]', '[class*="input"]',
-            '[id^="headlessui-"]', '.splash', '.decor', '[class*="hover-"]',
-            '[class*="overlay"]'
-        ];
-        killList.forEach(sel => {
-            clone.querySelectorAll(sel).forEach(el => el.remove());
-        });
+            // 3. Calculate Scroll Info
+            // Try to find the scrolling element within our root
+            const scrollEl = root.querySelector('.overflow-y-auto, [data-scroll-area]') || root;
+            const scrollInfo = {
+                scrollTop: scrollEl.scrollTop || 0,
+                scrollHeight: scrollEl.scrollHeight || 0,
+                clientHeight: scrollEl.clientHeight || 0
+            };
 
-        // 2. Text-Based Removal: IDE Meta Info
-        const garbageKeywords = [
-            'files with changes', 'review changes', 'select file', '選擇檔案', 
-            'fast', 'claude', 'gemini', 'gpt-oss', 'ask anything', 'ctrl+l',
-            'exit code 0', 'checked command status', 'good', 'bad'
-        ];
-        const allNodes = clone.querySelectorAll('*');
-        allNodes.forEach(el => {
-            if (el.children.length === 0 || (el.children.length === 1 && el.firstElementChild.tagName === 'SPAN')) {
-                const txt = (el.innerText || '').toLowerCase();
-                if (garbageKeywords.some(kw => txt.includes(kw))) {
-                    el.remove();
-                }
-            }
-            // Remove lingering empty divs or ones with just icons (that we deleted)
-            if (el.innerText?.trim() === '' && el.children.length === 0 && el.tagName !== 'BR') {
-                el.remove();
-            }
-        });
+            // 4. Serialize HTML
+            // If fallback to body, we truncate to avoid massive payloads
+            const html = root.outerHTML;
+            const isTruncated = !target; 
 
-        // 3. Layout Normalization & Ghost Height Removal
-        const cleanupStyles = (el) => {
-            if (el.style) {
-                if (el.style.height && el.style.height.includes('px')) el.style.height = 'auto';
-                if (el.style.minHeight && el.style.minHeight.includes('px')) el.style.minHeight = '0';
-                el.style.paddingBottom = '0';
-                el.style.width = '100%';
-                el.style.maxWidth = 'none';
-                el.style.overflowX = 'hidden';
-                if (window.getComputedStyle(el).position === 'fixed') el.style.position = 'relative';
-            }
-            Array.from(el.children).forEach(cleanupStyles);
-        };
-        
-        cleanupStyles(clone);
-
-        clone.style.padding = '0';
-        clone.style.margin = '0';
-        clone.style.height = 'auto';
-        clone.style.minHeight = '0';
-        clone.style.width = '100%';
-        clone.style.maxWidth = 'none';
-        clone.style.overflowX = 'hidden';
-
-        const html = clone.outerHTML;
-        const scrollContainer = cascade.querySelector('.overflow-y-auto, [data-scroll-area]') || cascade;
-        
-        return {
-            html: html,
-            css: '', 
-            scrollInfo: {
-                scrollTop: scrollContainer.scrollTop,
-                scrollHeight: scrollContainer.scrollHeight,
-                clientHeight: scrollContainer.clientHeight
-            }
-        };
+            return {
+                html: isTruncated ? html.substring(0, 10000) : html, 
+                css: allCSS,
+                scrollInfo: scrollInfo,
+                foundTarget: !!target,
+                stats: { nodes: root.querySelectorAll('*').length, cssLenght: allCSS.length },
+                title: document.title,
+                url: window.location.href
+            };
+        } catch(e) { return { error: e.toString() }; }
     })()`;
 
     for (const cdp of cdpList) {
-        // Fallback to undefined (default context) if no contexts discovered
-        const ctxIds = cdp.contexts.length > 0 ? cdp.contexts.map(c => c.id) : [undefined];
-        for (const ctxId of ctxIds) {
+        let contexts = cdp.contexts || [];
+        if (contexts.length === 0) contexts = [{ id: undefined }];
+
+        for (const ctx of contexts) {
             try {
                 const params = { expression: CAPTURE_SCRIPT, returnByValue: true };
-                if (ctxId !== undefined) params.contextId = ctxId;
+                if (ctx.id !== undefined) params.contextId = ctx.id;
 
-                const result = await cdp.call("Runtime.evaluate", params);
-                if (result.result?.value) {
-                    if (!result.result.value.error) {
-                        const val = result.result.value;
-                        val.hash = simpleHash(val.html + (val.scrollInfo?.scrollTop || 0));
-                        val.targetTitle = cdp.title;
-                        return val;
-                    }
+                const res = await cdp.call("Runtime.evaluate", params);
+
+                if (res.result?.value) {
+                    const val = res.result.value;
+                    if (val.error) continue;
+
+                    return {
+                        html: val.html,
+                        css: val.css,
+                        scrollInfo: val.scrollInfo,
+                        hash: simpleHash(val.html + (val.scrollInfo?.scrollTop || 0)),
+                        targetTitle: cdp.title
+                    };
                 }
+            } catch (e) {
+                // Console error only on catastrophic failure
+            }
+        }
+    }
+
+    return { error: 'cascade not found', debug: { reason: 'Exhausted all contexts' } };
+}
+
+export async function injectScroll(cdpList, options) {
+    const SCRIPT = `(async () => {
+        const { scrollTop, scrollPercent } = ${JSON.stringify(options)};
+        
+        // Helper: Find the best scroll container
+        const findScrollContainer = () => {
+             // 1. Try explicit scrollable areas first
+             const candidates = document.querySelectorAll('.overflow-y-auto, [data-scroll-area]');
+             for (const el of candidates) {
+                 if (el.scrollHeight > el.clientHeight) return el;
+             }
+             
+             // 2. Try the chat container itself
+             const cascade = document.querySelector('#conversation') || document.querySelector('#chat') || document.querySelector('#cascade');
+             if (cascade && cascade.scrollHeight > cascade.clientHeight) return cascade;
+             
+             // 3. Fallback to any scrollable div
+             const divs = document.querySelectorAll('div');
+             for (const div of divs) {
+                 if (div.scrollHeight > div.clientHeight + 50) return div;
+             }
+             return document.documentElement;
+        };
+
+        const target = findScrollContainer();
+        if (!target) return { success: false, error: 'No scroll target' };
+
+        // Logic from original server.js: Prefer percentage if valid, else absolute
+        if (typeof scrollPercent === 'number' && scrollPercent >= 0) {
+            target.scrollTop = scrollPercent * (target.scrollHeight - target.clientHeight);
+        } else if (typeof scrollTop === 'number') {
+             target.scrollTop = scrollTop;
+        }
+        
+        return { success: true, newScrollTop: target.scrollTop, scrollHeight: target.scrollHeight };
+    })()`;
+
+    for (const cdp of cdpList) {
+        for (const ctx of cdp.contexts) {
+            try {
+                const res = await cdp.call("Runtime.evaluate", { expression: SCRIPT, returnByValue: true, awaitPromise: true, contextId: ctx.id });
+                if (res.result?.value?.success) return res.result.value;
             } catch (e) { }
         }
     }
-    return null;
+    return { error: 'Failed' };
 }
 
 export async function injectMessage(cdpList, text, force = false) {
@@ -490,25 +499,6 @@ export async function setModel(cdpList, modelName) {
         }
     }
     return { error: 'Failed' };
-}
-
-export async function injectScroll(cdpList, scrollTop) {
-    const SCROLL_SCRIPT = `(() => {
-        const cascade = document.getElementById('cascade');
-        if (!cascade) return false;
-        const scrollContainer = cascade.querySelector('.overflow-y-auto, [data-scroll-area]') || cascade;
-        scrollContainer.scrollTop = ${scrollTop};
-        return true;
-    })()`;
-    for (const cdp of cdpList) {
-        for (const ctx of cdp.contexts) {
-            try {
-                const res = await cdp.call("Runtime.evaluate", { expression: SCROLL_SCRIPT, returnByValue: true, contextId: ctx.id });
-                if (res.result?.value === true) return true;
-            } catch (e) { }
-        }
-    }
-    return false;
 }
 
 export async function startNewChat(cdpList) {

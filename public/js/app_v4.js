@@ -160,17 +160,36 @@ function renderSnapshot(data) {
                 box-shadow: none !important;
                 transform: none !important;
             }
+            
+            /* --- CRITICAL: Contain Images and SVGs --- */
+            img, svg {
+                max-width: 100% !important;
+                height: auto !important;
+                max-height: 80vh !important; /* Prevent giant vertical scaling */
+                object-fit: contain !important;
+            }
+            
+            /* Specific fix for small icons expanding */
+            svg:not([class*="code-block-copy"]):not([width]):not([height]) {
+                 width: 1.25em !important;
+                 height: 1.25em !important;
+            }
+
             #ag-chat-root, #cascade {
                 display: flex !important;
                 flex-direction: column !important;
                 gap: 8px !important;
             }
                 /* Global kill for UI elements that leak through */
-                #cascade button, #cascade svg:not(.copy-icon), #cascade input, #cascade textarea,
+                #cascade button, #cascade svg:not(.copy-icon):not([viewBox]), #cascade input, #cascade textarea,
                 #cascade [role="button"], #cascade [class*="toolbar"], #cascade [class*="menu"],
                 #cascade [class*="banner"], #cascade footer {
                     display: none !important;
                 }
+                
+                /* Ensure buttons are REALLY gone */
+                button { display: none !important; }
+
                 #cascade pre, #cascade code {
                     background: #0f172a !important; /* Force deep slate for code */
                     border: 1px solid #1e293b !important;

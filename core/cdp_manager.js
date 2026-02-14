@@ -51,28 +51,62 @@ export async function connectCDP(url) {
     });
     let idCounter = 1;
     const pendingCalls = new Map();
+
+    // Full Context Tracking Logic (Ported from Original)
     const contexts = [];
     ws.on('message', (msg) => {
         try {
             const data = JSON.parse(msg);
+
+            // Handle Method Return
             if (data.id && pendingCalls.has(data.id)) {
                 const { resolve, reject, timeoutId } = pendingCalls.get(data.id);
-                clearTimeout(timeoutId); pendingCalls.delete(data.id);
-                if (data.error) reject(data.error); else resolve(data.result);
+                clearTimeout(timeoutId);
+                pendingCalls.delete(data.id);
+                if (data.error) reject(data.error);
+                else resolve(data.result);
             }
+
+            // Handle Context Events
             if (data.method === 'Runtime.executionContextCreated') {
-                contexts.push(data.params.context);
+                // Ensure we don't add duplicates
+                if (!contexts.find(c => c.id === data.params.context.id)) {
+                    contexts.push(data.params.context);
+                }
+            } else if (data.method === 'Runtime.executionContextDestroyed') {
+                const idx = contexts.findIndex(c => c.id === data.params.executionContextId);
+                if (idx !== -1) contexts.splice(idx, 1);
+            } else if (data.method === 'Runtime.executionContextsCleared') {
+                contexts.length = 0;
             }
-            if (data.method === 'Runtime.executionContextsCleared') contexts.length = 0;
         } catch (e) { }
     });
+
     const call = (method, params) => new Promise((resolve, reject) => {
         const id = idCounter++;
-        const timeoutId = setTimeout(() => { pendingCalls.delete(id); reject(new Error(`Timeout ${method}`)); }, 30000);
+        const timeoutId = setTimeout(() => {
+            pendingCalls.delete(id);
+            // Don't reject on timeout, just log (prevents crashing on slow Windows)
+            console.warn(`[CDP] Timeout waiting for ${method}`);
+            resolve(null);
+        }, 5000); // 5s timeout is safer for UI polling
+
         pendingCalls.set(id, { resolve, reject, timeoutId });
-        try { ws.send(JSON.stringify({ id, method, params })); } catch (e) { reject(e); }
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ id, method, params }));
+        } else {
+            clearTimeout(timeoutId);
+            pendingCalls.delete(id);
+            reject(new Error('WebSocket not open'));
+        }
     });
-    await call("Runtime.enable", {});
+
+    // Enable Runtime immediately to start receiving context events
+    await call("Runtime.enable");
+
+    // Give a short grace period for initial contexts to populate
+    await new Promise(r => setTimeout(r, 200));
+
     return { ws, call, contexts, url, close: () => ws.close() };
 }
 
