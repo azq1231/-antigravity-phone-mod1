@@ -3,10 +3,27 @@ import { simpleHash } from './utils.js';
 export async function captureSnapshot(cdpList) {
     const CAPTURE_SCRIPT = `(() => {
         const findCascade = (root) => {
-            return root.getElementById('conversation') || 
-                   root.getElementById('cascade') || 
-                   root.querySelector('[class*="chat-container"]') ||
-                   root.querySelector('[class*="chat-panel"]');
+            const selectors = [
+                '#conversation', '#chat', '#cascade',
+                '[class*="chat-container"]', '[class*="chat-panel"]',
+                '.react-scroll-to-bottom--css-jvyxe-1n7m0yu', // Specific to some Antigravity versions
+                '[data-testid="chat-history"]'
+            ];
+            
+            for (const sel of selectors) {
+                const el = root.querySelector(sel);
+                if (el) return el;
+            }
+
+            // Recursive Shadow DOM search
+            const allElements = root.querySelectorAll('*');
+            for (const el of allElements) {
+                if (el.shadowRoot) {
+                    const found = findCascade(el.shadowRoot);
+                    if (found) return found;
+                }
+            }
+            return null;
         };
 
         const cascade = findCascade(document);
@@ -492,4 +509,120 @@ export async function injectScroll(cdpList, scrollTop) {
         }
     }
     return false;
+}
+
+export async function startNewChat(cdpList) {
+    const EXP = `(async () => {
+        try {
+            const exactBtn = document.querySelector('[data-tooltip-id="new-conversation-tooltip"]');
+            if (exactBtn) {
+                exactBtn.click();
+                return { success: true, method: 'data-tooltip-id' };
+            }
+
+            const allButtons = Array.from(document.querySelectorAll('button, [role="button"], a'));
+            const plusButtons = allButtons.filter(btn => {
+                if (btn.offsetParent === null) return false;
+                return btn.querySelector('svg.lucide-plus') || 
+                       btn.innerText.toLowerCase().includes('new chat') ||
+                       btn.title?.toLowerCase().includes('new chat');
+            });
+
+            if (plusButtons.length > 0) {
+                plusButtons[0].click();
+                return { success: true, method: 'plus-search' };
+            }
+
+            return { error: 'New Chat button not found' };
+        } catch(err) {
+            return { error: 'JS Error: ' + err.toString() };
+        }
+    })()`;
+
+    for (const cdp of cdpList) {
+        for (const ctx of cdp.contexts) {
+            try {
+                const res = await cdp.call("Runtime.evaluate", { expression: EXP, returnByValue: true, awaitPromise: true, contextId: ctx.id });
+                if (res.result?.value?.success) return res.result.value;
+            } catch (e) { }
+        }
+    }
+    return { error: 'Failed' };
+}
+
+export async function getChatHistory(cdpList) {
+    const EXP = `(async () => {
+        try {
+            const historyList = document.querySelector('[class*="history-list"], [class*="ConversationList"]');
+            if (!historyList) {
+                // Try searching for any sidebar-like container
+                const sidebar = document.querySelector('nav, [class*="sidebar"]');
+                if (!sidebar) return { error: 'History container not found' };
+                
+                const possibleItems = Array.from(sidebar.querySelectorAll('a, button, [role="link"]'))
+                    .filter(el => el.innerText.length > 5 && el.innerText.length < 100);
+                
+                if (possibleItems.length > 0) {
+                     return { success: true, items: possibleItems.map((el, i) => ({ id: i, title: el.innerText.trim(), active: false })) };
+                }
+                return { error: 'No history items found in sidebar' };
+            }
+
+            const items = Array.from(historyList.querySelectorAll('[class*="history-item"], [class*="ConversationListItem"]'))
+                .filter(el => el.offsetParent !== null)
+                .map((el, idx) => {
+                    const titleEl = el.querySelector('[class*="title"], [class*="text-ellipsis"]');
+                    return {
+                        id: idx,
+                        title: (titleEl ? titleEl.innerText : el.innerText).trim().substring(0, 100),
+                        active: el.classList.contains('active') || !!el.querySelector('[class*="active"]')
+                    };
+                });
+
+            return { success: true, items };
+        } catch(err) {
+            return { error: err.toString() };
+        }
+    })()`;
+
+    for (const cdp of cdpList) {
+        for (const ctx of cdp.contexts) {
+            try {
+                const res = await cdp.call("Runtime.evaluate", { expression: EXP, returnByValue: true, awaitPromise: true, contextId: ctx.id });
+                if (res.result?.value?.success) return res.result.value;
+            } catch (e) { }
+        }
+    }
+    return { error: 'Failed' };
+}
+
+export async function selectChat(cdpList, index) {
+    const EXP = `(async () => {
+        try {
+            const historyList = document.querySelector('[class*="history-list"], [class*="ConversationList"]');
+            const sidebar = historyList || document.querySelector('nav, [class*="sidebar"]');
+            if (!sidebar) return { error: 'History container not found' };
+
+            const items = Array.from(sidebar.querySelectorAll('[class*="history-item"], [class*="ConversationListItem"], a, button, [role="link"]'))
+                .filter(el => el.offsetParent !== null && el.innerText.length > 5);
+            
+            if (items[${index}]) {
+                items[${index}].click();
+                return { success: true };
+            }
+            return { error: 'Item not found at index ${index}' };
+        } catch(err) {
+            return { error: err.toString() };
+        }
+    })()`;
+
+    for (const cdp of cdpList) {
+        for (const ctx of cdp.contexts) {
+            try {
+                const res = await cdp.call("Runtime.evaluate", { expression: EXP, returnByValue: true, awaitPromise: true, contextId: ctx.id });
+                if (res.result?.value?.success) return res.result.value;
+            } catch (e) { }
+        }
+    }
+    return { error: 'Failed' };
 }

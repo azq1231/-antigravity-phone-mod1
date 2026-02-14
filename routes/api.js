@@ -3,7 +3,7 @@ import fs from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { activeConnections, getOrConnectParams, findAllInstances } from '../core/cdp_manager.js';
-import { captureSnapshot, injectMessage, getAppState, setMode, setModel, injectScroll, injectImage } from '../core/automation.js';
+import { captureSnapshot, injectMessage, getAppState, setMode, setModel, injectScroll, injectImage, startNewChat, getChatHistory, selectChat } from '../core/automation.js';
 import { spawnInstance, killInstance } from '../core/instance_manager.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -12,7 +12,6 @@ const __dirname = dirname(__filename);
 const router = express.Router();
 const PORTS = [9000, 9001, 9002, 9003];
 
-// Read version from package.json
 const pkg = JSON.parse(fs.readFileSync(join(__dirname, '..', 'package.json'), 'utf8'));
 const APP_VERSION = pkg.version;
 
@@ -81,6 +80,31 @@ router.post('/set-model', async (req, res) => {
     try {
         const conn = await getOrConnectParams(parseInt(req.query.port) || 9000);
         const result = await setModel(conn, req.body.model);
+        res.json(result);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/new-chat', async (req, res) => {
+    try {
+        const conn = await getOrConnectParams(parseInt(req.query.port) || 9000);
+        const result = await startNewChat(conn);
+        res.json(result);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/history', async (req, res) => {
+    try {
+        const conn = await getOrConnectParams(parseInt(req.query.port) || 9000);
+        const result = await getChatHistory(conn);
+        res.json(result);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/select-chat', async (req, res) => {
+    try {
+        const { index } = req.body;
+        const conn = await getOrConnectParams(parseInt(req.query.port) || 9000);
+        const result = await selectChat(conn, index);
         res.json(result);
     } catch (e) { res.status(500).json({ error: e.message }); }
 });

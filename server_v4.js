@@ -100,7 +100,8 @@ async function createServer() {
                     if (ws.lastHash !== effectiveSnapshot.hash) console.log(`[V4-LOOP] Sending new snapshot from Port ${ws.viewingPort} to client`);
                     ws.send(JSON.stringify({ type: 'snapshot_update', port: ws.viewingPort, ...effectiveSnapshot }));
                     ws.lastHash = effectiveSnapshot.hash;
-                } else if (!effectiveSnapshot && forceUpdate) {
+                } else if (!effectiveSnapshot && forceUpdate && !ws.lastHash) {
+                    // Only send error HTML if we DON'T have a successful lastHash (prevents flickering)
                     ws.send(JSON.stringify({ type: 'snapshot_update', error: 'No snapshot available', html: '<div class="error-state">Antigravity is running, but no chat interface was found. Please open the Chat panel.</div>' }));
                 }
             } catch (e) { console.error(`[V4-LOOP] Error:`, e.message); }

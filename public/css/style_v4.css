@@ -106,30 +106,38 @@ body {
     transform: scale(0.95);
 }
 
-.refresh-btn {
+.refresh-btn,
+.icon-btn {
     background: transparent;
     border: none;
     color: var(--text-muted);
     cursor: pointer;
-    padding: 4px;
-    border-radius: 4px;
+    padding: 6px;
+    border-radius: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
     transition: all 0.2s;
 }
 
-.refresh-btn:hover {
+.refresh-btn:hover,
+.icon-btn:hover {
     color: var(--text-main);
     background: rgba(255, 255, 255, 0.1);
 }
 
-.refresh-btn svg {
-    width: 18px;
-    height: 18px;
+.refresh-btn svg,
+.icon-btn svg {
+    width: 20px;
+    height: 20px;
     stroke: currentColor;
-    stroke-width: 2.5;
+    stroke-width: 2;
     fill: none;
+}
+
+.icon-btn#newChatBtn {
+    font-size: 20px;
+    font-weight: 400;
 }
 
 .status-badge {
@@ -596,6 +604,58 @@ textarea::-webkit-scrollbar {
 
 .modal-option:active {
     background: var(--bg-input);
+}
+
+/* History Item Styles */
+.history-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: 1px solid transparent;
+}
+
+.history-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.history-item.active {
+    background: rgba(59, 130, 246, 0.1);
+    border-color: rgba(59, 130, 246, 0.3);
+}
+
+.history-item-icon {
+    width: 32px;
+    height: 32px;
+    background: var(--bg-input);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    color: var(--text-muted);
+}
+
+.history-item.active .history-item-icon {
+    background: var(--accent);
+    color: white;
+}
+
+.history-item-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.history-item-title {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-main);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* SSL Banner */

@@ -12,10 +12,12 @@ const refreshBtn = document.getElementById('refreshBtn');
 const instanceText = document.getElementById('instanceText');
 const modeText = document.getElementById('modeText');
 const modelText = document.getElementById('modelText');
-const modalOverlay = document.getElementById('modalOverlay');
-const modalList = document.getElementById('modalList');
 const imageInput = document.getElementById('imageInput');
 const attachBtn = document.getElementById('attachBtn');
+const newChatBtn = document.getElementById('newChatBtn');
+const historyBtn = document.getElementById('historyBtn');
+const modalOverlay = document.getElementById('modalOverlay');
+const modalList = document.getElementById('modalList');
 
 // State
 let ws = null;
@@ -163,23 +165,37 @@ function renderSnapshot(data) {
                 flex-direction: column !important;
                 gap: 8px !important;
             }
-            /* Global kill for UI elements that leak through */
-            #cascade button, #cascade svg, #cascade input, #cascade textarea,
-            #cascade [role="button"], #cascade [class*="toolbar"], #cascade [class*="menu"] {
-                display: none !important;
-            }
-            #ag-chat-root p, #cascade p, #ag-chat-root span, #cascade span, #cascade div { 
-                color: #ffffff !important; 
-                opacity: 1 !important;
-                line-height: 1.6 !important;
-                font-size: 15px !important;
-            }
-            #ag-chat-root { margin-top: 0 !important; padding: 0 !important; }
-            
-            #ag-chat-root a, #cascade a { color: #60a5fa !important; font-weight: 600 !important; }
-            ::-webkit-scrollbar { width: 6px !important; }
-            ::-webkit-scrollbar-thumb { background: #475569 !important; border-radius: 10px; }
-        `;
+                /* Global kill for UI elements that leak through */
+                #cascade button, #cascade svg:not(.copy-icon), #cascade input, #cascade textarea,
+                #cascade [role="button"], #cascade [class*="toolbar"], #cascade [class*="menu"],
+                #cascade [class*="banner"], #cascade footer {
+                    display: none !important;
+                }
+                #cascade pre, #cascade code {
+                    background: #0f172a !important; /* Force deep slate for code */
+                    border: 1px solid #1e293b !important;
+                    border-radius: 4px !important;
+                    padding: 4px 8px !important;
+                    color: inherit !important; /* Preserve token colors */
+                }
+                #ag-chat-root :not([class*="mtk"]):not([style*="color"]) p, 
+                #cascade :not([class*="mtk"]):not([style*="color"]) p,
+                #ag-chat-root :not([class*="mtk"]):not([style*="color"]) span,
+                #cascade :not([class*="mtk"]):not([style*="color"]) span,
+                #cascade :not([class*="mtk"]):not([style*="color"]) div { 
+                    color: #ffffff !important; 
+                    opacity: 1 !important;
+                    line-height: 1.6 !important;
+                    font-size: 15px !important;
+                }
+                /* Explicitly allow tokens and links to keep their colors */
+                #cascade [class*="mtk"], #cascade [style*="color"], #cascade a {
+                    color: inherit !important;
+                }
+                #ag-chat-root a, #cascade a { color: #60a5fa !important; font-weight: 600 !important; text-decoration: underline !important; }
+                ::-webkit-scrollbar { width: 4px !important; }
+                ::-webkit-scrollbar-thumb { background: #334155 !important; border-radius: 10px; }
+            `;
         document.head.appendChild(style);
     }
 
@@ -207,14 +223,14 @@ function scrollToBottom() {
 // Messaging Logic (V3 Robust Retry)
 async function sendMessage(retryCount = 0) {
     console.log('[DEBUG] sendMessage called, retryCount:', retryCount, 'isSending:', isSending, 'pendingImage:', pendingImage ? 'exists' : 'null');
-    
+
     if (isSending && retryCount === 0) {
         console.log('[DEBUG] Blocked: isSending is true');
         return;
     }
     const msg = messageInput.value.trim();
     console.log('[DEBUG] msg:', msg, 'pendingImage:', pendingImage ? 'exists' : 'null');
-    
+
     if (!msg && !pendingImage) {
         console.log('[DEBUG] Blocked: no msg and no pendingImage');
         return;
@@ -237,7 +253,7 @@ async function sendMessage(retryCount = 0) {
 
         const payload = { message: msg, msgId: window.currentMsgId };
         if (pendingImage) payload.image = pendingImage;
-        
+
         console.log('[DEBUG] Sending payload with image:', pendingImage ? 'yes' : 'no');
 
         const res = await fetchWithAuth(`/send?port=${currentViewingPort}&_t=${Date.now()}`, {
@@ -265,25 +281,13 @@ async function sendMessage(retryCount = 0) {
             forceScrollToBottom = true;
             setTimeout(() => fetchAppState(), 500);
             return;
-        } else {
-            throw new Error(data.error || 'Server processing failed');
         }
+        throw new Error(data.error || 'Server processing failed');
     } catch (e) {
-        console.error('[App] Send failed:', e);
-
-        // Auto-fix: If 9001 is broken, force back to 9000
-        if (e.message.includes('9001') || currentViewingPort === 9001) {
-            console.warn('[System] Port 9001 failed, rolling back to 9000');
-            currentViewingPort = 9000;
-            localStorage.setItem('lastViewingPort', 9000);
-            statusText.textContent = '♻️ Auto-switching to Port 9000...';
-            setTimeout(() => {
-                alert('Detect Port 9001 issue. System has auto-switched you back to 9000. Please try again.');
-                location.reload();
-            }, 500);
-        } else {
-            statusText.textContent = `❌ ${e.message}`;
-            alert(`Send failed: ${e.message}`);
+        console.warn('[App] Send failed:', e);
+        statusText.textContent = `❌ ${e.message}`;
+        if (!e.message.includes('Timeout')) {
+            console.error('Send failed details:', e);
         }
         resetSendState();
     }
@@ -501,6 +505,103 @@ document.getElementById('scrollToBottom').onclick = () => {
     forceScrollToBottom = true; // Temporary lock
 };
 
+// --- History & New Chat Logic ---
+if (newChatBtn) {
+    newChatBtn.onclick = async () => {
+        newChatBtn.style.opacity = '0.5';
+        try {
+            const res = await fetchWithAuth(`/new-chat?port=${currentViewingPort}`, { method: 'POST' });
+            const data = await res.json();
+            if (data.success) {
+                statusText.textContent = '🆕 Starting new chat...';
+                setTimeout(() => {
+                    loadSnapshot();
+                    fetchAppState();
+                }, 2000);
+            }
+        } catch (e) {
+            console.error('New Chat failed', e);
+        } finally {
+            newChatBtn.style.opacity = '1';
+        }
+    };
+}
+
+if (historyBtn) {
+    historyBtn.onclick = async () => {
+        historyBtn.style.opacity = '0.5';
+        try {
+            const res = await fetchWithAuth(`/history?port=${currentViewingPort}`);
+            const data = await res.json();
+            if (data.success && data.items) {
+                renderHistoryModal(data.items);
+            } else {
+                alert('No history found or failed to load.');
+            }
+        } catch (e) {
+            console.error('History load failed', e);
+        } finally {
+            historyBtn.style.opacity = '1';
+        }
+    };
+}
+
+function renderHistoryModal(items) {
+    modalList.innerHTML = '';
+
+    const title = document.createElement('div');
+    title.className = 'modal-title';
+    title.textContent = 'Chat History';
+    modalList.appendChild(title);
+
+    items.forEach((item, index) => {
+        const div = document.createElement('div');
+        div.className = `history-item ${item.active ? 'active' : ''}`;
+
+        div.innerHTML = `
+            <div class="history-item-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                </svg>
+            </div>
+            <div class="history-item-content">
+                <div class="history-item-title">${item.title || 'Untitled Chat'}</div>
+            </div>
+        `;
+
+        div.onclick = async () => {
+            modalOverlay.style.display = 'none';
+            chatContent.innerHTML = `
+                <div class="loading-state">
+                    <div class="loading-spinner"></div>
+                    <p>Switching to chat...</p>
+                </div>
+            `;
+            try {
+                const res = await fetchWithAuth(`/select-chat?port=${currentViewingPort}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ index })
+                });
+                const result = await res.json();
+                if (result.success) {
+                    setTimeout(() => {
+                        loadSnapshot();
+                        fetchAppState();
+                    }, 1500);
+                }
+            } catch (e) {
+                console.error('Select chat failed', e);
+                loadSnapshot();
+            }
+        };
+
+        modalList.appendChild(div);
+    });
+
+    modalOverlay.style.display = 'flex';
+}
+
 // Image Upload Event Listener
 if (imageInput) {
     imageInput.addEventListener('change', (e) => {
@@ -520,14 +621,14 @@ if (imageInput) {
         reader.onload = (event) => {
             pendingImage = event.target.result;
             console.log('[DEBUG] Image loaded, size:', Math.round(pendingImage.length / 1024), 'KB');
-            
+
             // 恢復圖示並顯示完成狀態
             if (attachBtn) {
                 attachBtn.classList.add('active');
                 attachBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
             }
             statusText.textContent = '📷 Image ready! Click Send to upload';
-            
+
             // 3秒後恢復狀態文字
             setTimeout(() => {
                 statusText.textContent = `Live (${cachedVLabel})`;
