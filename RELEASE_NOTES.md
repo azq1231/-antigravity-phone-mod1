@@ -1,19 +1,42 @@
-# 📦 Release Notes
+## v4.1.0 - V4 Stable & High Visibility Update 💎
 
-All notable changes to **Antigravity Phone Connect** are documented here, in reverse chronological order (latest first).
+**Release Date:** February 15, 2026
+
+---
+
+### ✨ NEW: V4.1 Stable Architecture
+
+- **Multi-Instance Support**: Full reliability for Port 9000-9003 with manual/auto switching.
+- **Smart Target Selection**: Engine now prioritizes active chat views over launchers or walkthroughs.
+
+### 🛡️ Enhanced Stability
+
+- **Nuclear Sanitization**: Fully resolved `vscode-file://` console errors using transparent data-URI masking.
+- **Switch Synchronization**: Added immediate cache busting on port change to ensure instant UI updates.
+- **Manual Mode Guard**: System now respects user port selection and stops automatic "hunting" once manually locked.
+
+### 🎨 Visual & Readability Fixes
+
+- **Force High Contrast**: Guaranteed white text on dark blue background for all chat containers.
+- **Layout Neutralization**: Fixed "Gigantic Height" bugs (90,000px list stretches) that made dialogue invisible.
+- **UI Decuttering**: Automatically hides Command Palette and Quick Open overlays that were obscuring the chat history.
+- **Slot Manager Fix**: Restored missing "Switch/Start/Stop" buttons in the port manager.
 
 ---
 
 ## v0.2.1 - Magic Links & Unified Launcher ✨
+
 **Release Date:** January 21, 2026
 
 ---
 
 ### ✨ NEW: Magic Link Auto-Login
+
 - **QR Code Magic**: In Web Mode, the QR code now embeds your password! Just scan it to log in instantly—no typing required.
 - **Smart Redirects**: Automatically sets your secure session cookie and seamlessly redirects you to the app interface.
 
 ### 🚀 Unified Launcher Experience
+
 - **One Script to Rule Them All**: Introduced `launcher.py`, a robust Python core that powers both Local and Web modes.
 - **Improved Local Mode**:
   - Automatically detects if you have SSL certificates and generates the correct `https://` local URL.
@@ -23,42 +46,50 @@ All notable changes to **Antigravity Phone Connect** are documented here, in rev
   - Displays clear, numbered steps for connecting on both Local and Web modes.
 
 ### 🛡️ Enhanced Troubleshooting
+
 - **Real-Time Diagnostics**: The launcher now monitors the server log in real-time.
 - **Immediate Alerts**: If the server can't find the Antigravity editor (CDP), it instantly flashes a **RED WARNING** in the terminal with specific fix instructions (e.g., "Open with Antigravity (Debug)").
 
 ### 🐛 Bug Fixes
+
 - **Socket Error**: Fixed a crash in `launcher.py` related to `socket.AF_INET` initialization.
 - **HTTPS Mismatch**: Fixed an issue where Local Mode would generate `http://` links even when the server was running securely on `https://`.
 
 ---
 
 ## v0.2.0 - Global Remote Access (Web Mode) 🌍
+
 **Release Date:** January 21, 2026
 
 ---
 
 ### ✨ NEW: World-Wide Remote Access
+
 - **Global Tunneling**: Integrated `ngrok` support via `tunnel.py` to expose the server securely to the internet.
 - **Mobile Data Support**: Access your Antigravity chat from anywhere without needing to be on the same Wi-Fi.
 - **One-Click Web Launchers**: New `start_ag_phone_connect_web.bat` and `.sh` scripts that automate server startup, tunnel creation, and passcode management.
 
 ### 🔒 Security & Authentication
+
 - **Password Protection**: Introduced a passcode system for all remote sessions.
 - **Passcode Auto-Generation**: Automatically generates a temporary 6-digit passcode if no password is set in `.env`.
 - **Conditional Auth**: Intelligently bypasses authentication for devices on the same local Wi-Fi for a seamless home experience.
 - **Secure Sessions**: Implemented signed `httpOnly` cookies for robust session management.
 
 ### 🛡️ Improved Process Management
+
 - **Aggressive Cleanup**: Launchers now forcefully kill any hidden "ghost" processes from previous messy exits, ensuring a clean start every time.
 - **Smarter Exit Handlers**: `Ctrl+C` now triggers a graceful shutdown and automatically closes the terminal window after a 3-second countdown.
 
 ### 🚀 Optimization
+
 - **Data Compression**: Gzip compression added to all snapshots, reducing mobile data usage and speeding up loading on thin signals.
 - **Express Speed**: Snapshots are now served with explicit UTF-8 encoding and optimized headers to prevent character corruption on mobile proxies.
 
 ---
 
 ## v0.1.7 - Robustness & Stability Update 🛡️
+
 **Release Date:** January 21, 2026
 
 ---
@@ -66,26 +97,31 @@ All notable changes to **Antigravity Phone Connect** are documented here, in rev
 ### ✨ Key Improvements
 
 #### 🔄 Smart Reconnection
+
 - **Auto-Recovery**: Server now automatically detects lost CDP connections (e.g., if you close/reopen Antigravity) and reconnects without needing a restart.
 - **Resilient Startup**: You can now start the server *before* Antigravity. It will patiently poll ("🔍 Looking for Antigravity...") until it finds the debug port.
 - **Context Awareness**: Improved logic to track active execution contexts, preventing "stuck" snapshots when tabs are closed or refreshed.
 
 #### 🛠️ Frontend & Performance
+
 - **Client-Side Rendering**: Fixed a critical bug where the mobile client would hang on loading due to a syntax error in dynamic CSS injection.
 - **Optimized Capture**: Rewrote the CSS gathering logic to use array joining instead of string concatenation, improving performance on large chat histories.
 - **Syntax Fixes**: Corrected template literal escaping in the snapshot capture script (`\n` vs `\\n`) to prevent runtime evaluation errors.
 
 #### 🔍 Enhanced Diagnostics
+
 - **Throttled Logging**: Added intelligent logging that warns about common issues (like "cascade not found") only once every 10 seconds, preventing console spam.
 - **Actionable Tips**: Error messages now include helpful hints (e.g., "Tip: Ensure an active chat is open in Antigravity").
 
 #### 🐛 Bug Fixes
+
 - **Registry Path Handling**: Fixed `install_context_menu.bat` to correctly handle installation paths containing spaces (wrapping `%V` in quotes).
 - **Process Cleanup**: Improved the "Auto-Port Kill" feature to be more reliable on Windows.
 
 ---
 
 ## v0.1.6 - Mobile Copy & Stability Improvements 📋
+
 **Release Date:** January 20, 2026
 
 ---
@@ -93,6 +129,7 @@ All notable changes to **Antigravity Phone Connect** are documented here, in rev
 ### ✨ New Features
 
 #### 📋 Mobile Code Block Copy Button
+
 - **One-Tap Copy**: Small copy icon appears next to all code blocks on mobile
 - **Cross-Platform Support**: Works on Android, iOS, Windows, and macOS browsers
 - **Visual Feedback**: Icon turns into a green checkmark (✓) on successful copy
@@ -100,6 +137,7 @@ All notable changes to **Antigravity Phone Connect** are documented here, in rev
 - **Minimal Design**: Icon-only button, no text, no frame - clean and unobtrusive
 
 #### 🔄 Automatic Port Cleanup
+
 - **No More EADDRINUSE**: Server automatically kills any existing process on port 3000 before starting
 - **Cross-Platform**: Works on Windows (`taskkill`), Linux (`kill`), and macOS (`kill`)
 - **Console Notification**: Shows `⚠️ Killed existing process on port 3000 (PID: XXXX)` when cleanup occurs
@@ -107,6 +145,7 @@ All notable changes to **Antigravity Phone Connect** are documented here, in rev
 ### 🐛 Bug Fixes
 
 #### 📜 Scroll Jumping Fix
+
 - **Problem**: When scrolling on phone, the view would jump to bottom after each snapshot update
 - **Solution**: Added 3-second scroll lock that respects user scroll position
 - **Smart Detection**: Auto-scroll resumes when user scrolls back to bottom or taps scroll-to-bottom button
@@ -130,6 +169,7 @@ All notable changes to **Antigravity Phone Connect** are documented here, in rev
 ---
 
 ## v0.1.5 - HTTPS & Scroll Sync 🔒
+
 **Release Date:** January 17, 2026
 
 ---
@@ -141,6 +181,7 @@ This release introduces **HTTPS support**, **scroll synchronization**, and sever
 ### ✨ New Features
 
 #### 🔒 HTTPS Support
+
 - **Secure connections** with self-signed SSL certificates
 - **Hybrid certificate generation**: Tries OpenSSL first (for proper IP SAN support), falls back to Node.js crypto (zero dependencies)
 - **Auto-detection**: Server automatically uses HTTPS when certificates are present
@@ -148,11 +189,13 @@ This release introduces **HTTPS support**, **scroll synchronization**, and sever
 - **Git for Windows support**: Automatically finds OpenSSL bundled with Git
 
 #### 📜 Scroll Sync
+
 - **Bi-directional scrolling**: When you scroll on your phone, the desktop Antigravity scrolls too
 - **Virtualized content support**: Triggers snapshot reload after scrolling to capture newly rendered messages
 - **Debounced**: 150ms debounce to prevent excessive requests
 
 #### 📄 New Documentation
+
 - **SECURITY.md**: Comprehensive security guide with:
   - Browser warning bypass instructions (Chrome, Safari, Firefox, Edge)
   - Certificate verification commands
@@ -162,14 +205,17 @@ This release introduces **HTTPS support**, **scroll synchronization**, and sever
 ### 🐛 Bug Fixes
 
 #### Message Sending
+
 - **Fixed**: "Error sending: Unknown" popup no longer appears when message is successfully sent
 - **Fixed**: Message input now clears immediately after sending (optimistic UI)
 - **Changed**: `/send` endpoint now always returns 200 OK
 
 #### CSS Formatting
+
 - **Fixed**: Double-escaped newline in CSS capture that was breaking phone formatting
 
 #### IP Detection
+
 - **Fixed**: Now prioritizes real network IPs (192.168.x.x, 10.x.x.x) over virtual adapters (172.x.x.x from WSL/Docker)
 - **Fixed**: Server now displays only one URL instead of multiple confusing options
 
@@ -184,12 +230,14 @@ This release introduces **HTTPS support**, **scroll synchronization**, and sever
 ### 🔧 Technical Details
 
 #### HTTPS Implementation
+
 - Uses Node.js built-in `https` module
 - Certificates stored in `./certs/` (gitignored)
 - Server checks for `certs/server.key` and `certs/server.cert` on startup
 - WebSocket automatically upgrades to `wss://` when HTTPS is enabled
 
 #### Scroll Sync Implementation
+
 - Uses percentage-based scrolling for cross-device consistency
 - Handles Antigravity's virtualized scrolling by:
   1. Scrolling desktop to position
@@ -200,6 +248,7 @@ This release introduces **HTTPS support**, **scroll synchronization**, and sever
 ---
 
 ## v0.1.0 - Initial Release 🎉
+
 **Release Date:** January 17, 2026
 
 ---
@@ -209,35 +258,42 @@ We are thrilled to announce the **first official release** of **Antigravity Phon
 ### ✨ Features
 
 #### 🔄 Real-Time Mirroring
+
 - **1-Second Polling**: Near-instant sync keeps your phone's display updated with your desktop session.
 - **WebSocket Notifications**: Efficient push updates notify your phone only when content changes.
 - **Smart Content Hashing**: Minimizes bandwidth by detecting actual UI changes.
 
 #### 🎮 Remote Control
+
 - **Send Messages**: Compose and send prompts to your AI directly from your phone.
 - **Stop Generations**: Halt long-running AI generations with a single tap.
 - **Mode Switching**: Toggle between **Fast** and **Planning** modes remotely.
 - **Model Selection**: Switch between AI models (Gemini, Claude, GPT) on the fly.
 
 #### 🧠 Thought Expansion
+
 - **Remote Click Relay**: Tap on "Thinking..." or "Thought" blocks on your phone to expand them on your desktop IDE.
 - **Full Reasoning Access**: Peek into the AI's internal reasoning process from anywhere in your home.
 
 #### 🔁 Bi-Directional Sync
+
 - **State Synchronization**: Changes made on your desktop (model, mode) are automatically reflected on your phone.
 - **Force Refresh**: Manually trigger a full sync with the Refresh button when needed.
 
 #### 🎨 Premium Mobile UI
+
 - **Dark-Themed Design**: Sleek, modern slate-dark interface optimized for mobile viewing.
 - **Touch-Optimized**: Large tap targets and responsive layouts for comfortable mobile interaction.
 - **Aggressive CSS Inheritance**: VS Code theme-agnostic rendering ensures consistent mobile appearance.
 
 #### 📁 Context Menu Integration
+
 - **Windows**: Right-click any folder and select "Open with Antigravity (Debug)" for instant debugging sessions.
 - **Linux (Nautilus/GNOME)**: Native Nautilus script integration for seamless right-click access.
 - **macOS**: Step-by-step Quick Action guide for Automator-based integration.
 
 #### 🛠️ Context Menu Management Scripts
+
 - **Install/Remove**: Easy toggle for context menu entries.
 - **Backup**: Automatic backup before making registry/script changes.
 - **Restart**: One-click Explorer (Windows) or Nautilus (Linux) restart to apply changes.

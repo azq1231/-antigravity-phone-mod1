@@ -16,7 +16,7 @@ export async function captureSnapshot(cdpList) {
             // If we found a target, use it. Otherwise, use body but indicate it's a fallback
             const root = target || body;
             
-            // 2. Capture CSS (Critical for styling)
+            // 2. Capture CSS
             // We iterate all stylesheets to get valid CSS rules
             const rules = [];
             try {
@@ -31,7 +31,6 @@ export async function captureSnapshot(cdpList) {
             const allCSS = rules.join('\\n');
 
             // 3. Calculate Scroll Info
-            // Try to find the scrolling element within our root
             const scrollEl = root.querySelector('.overflow-y-auto, [data-scroll-area]') || root;
             const scrollInfo = {
                 scrollTop: scrollEl.scrollTop || 0,
@@ -39,22 +38,56 @@ export async function captureSnapshot(cdpList) {
                 clientHeight: scrollEl.clientHeight || 0
             };
 
-            // 4. Serialize HTML
-            // If fallback to body, we truncate to avoid massive payloads
-            const html = root.outerHTML;
+            // 4. Serialize & Clean HTML
             const isTruncated = !target; 
+            const badSchemes = ['vscode-file://', 'file://', 'app://', 'devtools://', 'vscode-webview-resource://'];
+            const blankGif = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+            
+            const cleanText = (text) => {
+                if (!text) return text;
+                let out = text;
+                if (out.includes('url(')) {
+                    out = out.split('url(').map((part, i) => {
+                        if (i === 0) return part;
+                        const endIdx = part.indexOf(')');
+                        const urlContent = part.substring(0, endIdx);
+                        if (badSchemes.some(s => urlContent.includes(s))) {
+                            return '"' + blankGif + '"' + part.substring(endIdx);
+                        }
+                        return part;
+                    }).join('url(');
+                }
+                badSchemes.forEach(s => {
+                    out = out.split(s).join('#');
+                });
+                return out;
+            };
+
+            root.querySelectorAll('*').forEach(el => {
+                for (let i = 0; i < el.attributes.length; i++) {
+                    const attr = el.attributes[i];
+                    if (badSchemes.some(s => attr.value.includes(s))) {
+                        el.setAttribute(attr.name, cleanText(attr.value));
+                    }
+                }
+                if (el.tagName === 'STYLE') el.textContent = cleanText(el.textContent);
+            });
+
+            const cleanCSS = cleanText(allCSS);
+            let cleanHTML = cleanText(root.outerHTML);
 
             return {
-                html: isTruncated ? html.substring(0, 10000) : html, 
-                css: allCSS,
+                html: isTruncated ? cleanHTML.substring(0, 10000) : cleanHTML, 
+                css: cleanCSS,
                 scrollInfo: scrollInfo,
                 foundTarget: !!target,
-                stats: { nodes: root.querySelectorAll('*').length, cssLenght: allCSS.length },
                 title: document.title,
                 url: window.location.href
             };
         } catch(e) { return { error: e.toString() }; }
     })()`;
+
+    const candidates = [];
 
     for (const cdp of cdpList) {
         let contexts = cdp.contexts || [];
@@ -71,13 +104,15 @@ export async function captureSnapshot(cdpList) {
                     const val = res.result.value;
                     if (val.error) continue;
 
-                    return {
+                    candidates.push({
                         html: val.html,
                         css: val.css,
                         scrollInfo: val.scrollInfo,
                         hash: simpleHash(val.html + (val.scrollInfo?.scrollTop || 0)),
-                        targetTitle: cdp.title
-                    };
+                        targetTitle: cdp.title,
+                        foundTarget: val.foundTarget,
+                        url: val.url
+                    });
                 }
             } catch (e) {
                 // Console error only on catastrophic failure
@@ -85,7 +120,19 @@ export async function captureSnapshot(cdpList) {
         }
     }
 
-    return { error: 'cascade not found', debug: { reason: 'Exhausted all contexts' } };
+    if (candidates.length === 0) {
+        return { error: 'no snapshot found', debug: { reason: 'Exhausted all contexts' } };
+    }
+
+    // Best selection logic: 
+    // 1. Find ones that actually found the chat container (#conversation, etc)
+    const best = candidates.find(c => c.foundTarget) ||
+        // 2. Or pick the most "Antigravity" looking title
+        candidates.find(c => c.targetTitle?.includes('Antigravity') && !c.targetTitle?.includes('Walkthrough')) ||
+        // 3. Fallback to first
+        candidates[0];
+
+    return best;
 }
 
 export async function injectScroll(cdpList, options) {

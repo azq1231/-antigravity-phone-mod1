@@ -71,13 +71,9 @@ async function createServer() {
                 const snapshot = await captureSnapshot(conn);
                 let effectiveSnapshot = snapshot;
 
-                // If we found a valid snapshot (no error), it's a good target even if title looks suspicious
-                const isJunkTarget = snapshot?.targetTitle &&
-                    (snapshot.targetTitle === 'Launchpad' || snapshot.targetTitle === 'Walkthrough') &&
-                    (snapshot.error === 'cascade not found');
-
-                const isMissingCascade = !snapshot || snapshot.error === 'cascade not found';
-                const shouldHunt = (!ws.isManualMode && (isJunkTarget || isMissingCascade)) || (!snapshot && !ws.isManualMode);
+                // RELAXED FILTERING: If the user manually chose this port, show whatever we got (even if it's body fallback)
+                const isMissingCascade = !snapshot || snapshot.error;
+                const shouldHunt = !ws.isManualMode && isMissingCascade;
 
                 if (shouldHunt) {
                     for (const p of PORTS) {
@@ -118,7 +114,7 @@ async function createServer() {
                     console.log(`[V4-WS] Client switching to port ${d.port}`);
                     ws.viewingPort = parseInt(d.port);
                     ws.isManualMode = true;
-                    ws.lastHash = null;
+                    ws.lastHash = null; // Important: Clear hash to force immediate redraw on port change
                 }
                 if (d.type === 'scroll_event') {
                     const conn = activeConnections.get(ws.viewingPort);

@@ -146,74 +146,80 @@ function renderSnapshot(data) {
         const style = document.createElement('style');
         style.id = 'v4-styles';
         style.textContent = `
-            #ag-chat-root, #cascade, #cascade * { 
-                background: transparent !important; 
+            #chat-content-root, #ag-chat-root, #cascade, #conversation, #chat, #chat-area, 
+            #ag-chat-root *, #cascade *, #conversation *, #chat *, #chat-area * { 
+                background-color: transparent !important; 
                 color: #ffffff !important; 
+                fill: #ffffff !important;
                 font-family: 'Inter', 'Microsoft JhengHei', sans-serif !important; 
                 -webkit-font-smoothing: antialiased !important;
-                position: static !important; /* Force natural flow, kill absolute chaos */
+                position: static !important; /* Force natural flow */
                 width: auto !important;
                 height: auto !important;
-                min-height: 0 !important;
-                max-width: 100vw !important;
+                min-height: 0px !important; /* Kill massive height stretches */
+                max-width: 100% !important;
                 border: none !important;
                 box-shadow: none !important;
                 transform: none !important;
+                top: auto !important;
+                left: auto !important;
             }
             
+            /* Root-level forced background if transparent fallback fails */
+            #chatContent { background-color: #0f172a !important; }
+
+            /* --- Layout Fixes --- */
+            [style*="height: 9"], [style*="height: 8"], [style*="height: 7"], 
+            [style*="min-height: 9"], [style*="min-height: 8"], [style*="min-height: 7"] {
+                height: auto !important;
+                min-height: 0px !important;
+            }
+
+            /* --- UI Element Cleanup (Hiding Noise) --- */
+            /* Hide Command Palette / Quick Open overlays */
+            [class*="quick-input"], [class*="command-palette"], [placeholder*="Open window"], 
+            .monaco-inputbox, .quick-input-widget, 
+            /* Hide toolbars and banners */
+            [class*="toolbar"], [class*="banner"], [class*="footer"], [class*="menu"],
+            #cascade button, #cascade input, #cascade textarea, #cascade [role="button"] {
+                display: none !important;
+            }
+
             /* --- CRITICAL: Contain Images and SVGs --- */
-            img, svg {
+            #ag-chat-root img, #cascade img, #ag-chat-root svg, #cascade svg {
                 max-width: 100% !important;
                 height: auto !important;
-                max-height: 80vh !important; /* Prevent giant vertical scaling */
+                max-height: 70vh !important;
                 object-fit: contain !important;
+                display: block !important;
             }
             
-            /* Specific fix for small icons expanding */
             svg:not([class*="code-block-copy"]):not([width]):not([height]) {
                  width: 1.25em !important;
                  height: 1.25em !important;
             }
 
-            #ag-chat-root, #cascade {
-                display: flex !important;
-                flex-direction: column !important;
-                gap: 8px !important;
+            #cascade pre, #cascade code {
+                background-color: #1e293b !important;
+                border: 1px solid #334155 !important;
+                border-radius: 6px !important;
+                padding: 8px !important;
+                color: #e2e8f0 !important;
+                overflow-x: auto !important;
+                display: block !important;
             }
-                /* Global kill for UI elements that leak through */
-                #cascade button, #cascade svg:not(.copy-icon):not([viewBox]), #cascade input, #cascade textarea,
-                #cascade [role="button"], #cascade [class*="toolbar"], #cascade [class*="menu"],
-                #cascade [class*="banner"], #cascade footer {
-                    display: none !important;
-                }
-                
-                /* Ensure buttons are REALLY gone */
-                button { display: none !important; }
 
-                #cascade pre, #cascade code {
-                    background: #0f172a !important; /* Force deep slate for code */
-                    border: 1px solid #1e293b !important;
-                    border-radius: 4px !important;
-                    padding: 4px 8px !important;
-                    color: inherit !important; /* Preserve token colors */
-                }
-                #ag-chat-root :not([class*="mtk"]):not([style*="color"]) p, 
-                #cascade :not([class*="mtk"]):not([style*="color"]) p,
-                #ag-chat-root :not([class*="mtk"]):not([style*="color"]) span,
-                #cascade :not([class*="mtk"]):not([style*="color"]) span,
-                #cascade :not([class*="mtk"]):not([style*="color"]) div { 
-                    color: #ffffff !important; 
-                    opacity: 1 !important;
-                    line-height: 1.6 !important;
-                    font-size: 15px !important;
-                }
-                /* Explicitly allow tokens and links to keep their colors */
-                #cascade [class*="mtk"], #cascade [style*="color"], #cascade a {
-                    color: inherit !important;
-                }
-                #ag-chat-root a, #cascade a { color: #60a5fa !important; font-weight: 600 !important; text-decoration: underline !important; }
-                ::-webkit-scrollbar { width: 4px !important; }
-                ::-webkit-scrollbar-thumb { background: #334155 !important; border-radius: 10px; }
+            #cascade p, #cascade span, #cascade div { 
+                color: #ffffff !important; 
+                opacity: 1 !important;
+                line-height: 1.6 !important;
+                font-size: 15px !important;
+                background: transparent !important;
+            }
+
+            #cascade a { color: #60a5fa !important; font-weight: 600 !important; text-decoration: underline !important; }
+            ::-webkit-scrollbar { width: 4px !important; }
+            ::-webkit-scrollbar-thumb { background: #475569 !important; border-radius: 10px; }
             `;
         document.head.appendChild(style);
     }
