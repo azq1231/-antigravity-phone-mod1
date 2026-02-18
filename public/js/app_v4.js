@@ -1,5 +1,25 @@
 // --- app_v4.js: V4.1 Stable Frontend Logic (Isolated) ---
 
+// --- Remote Logging to Server (Pro Debugging) ---
+const originalLog = console.log;
+const originalWarn = console.warn;
+const originalError = console.error;
+
+function remoteLog(type, ...args) {
+    if (typeof ws !== 'undefined' && ws && ws.readyState === 1) { // 1 = OPEN
+        try {
+            ws.send(JSON.stringify({ type: 'client_log', level: type, data: args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ') }));
+        } catch (e) { }
+    }
+    if (type === 'error') originalError(...args);
+    else if (type === 'warn') originalWarn(...args);
+    else originalLog(...args);
+}
+console.log = (...args) => remoteLog('log', ...args);
+console.warn = (...args) => remoteLog('warn', ...args);
+console.error = (...args) => remoteLog('error', ...args);
+
+
 // Elements
 const chatContainer = document.getElementById('chatContainer');
 const chatContent = document.getElementById('chatContent');
@@ -71,7 +91,10 @@ async function fetchAppState() {
                 statusText.textContent = `Live (${vLabel})`;
             }
         }
-    } catch (e) { console.error('Sync failed', e); }
+    } catch (e) {
+        console.error('Sync failed', e);
+        if (statusText) statusText.textContent = `❌ Sync Err: ${e.message.substring(0, 15)}`;
+    }
 }
 
 // ... (in loadSnapshot)
@@ -85,44 +108,82 @@ async function loadSnapshot() {
 
 // WebSocket Connection
 function connectWebSocket() {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    ws = new WebSocket(`${protocol}//${window.location.host}`);
+    try {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const host = window.location.host;
+        console.log(`[App] Connecting to ${protocol}//${host}`);
 
-    ws.onopen = () => {
-        updateStatus(true);
-        ws.send(JSON.stringify({ type: 'switch_port', port: currentViewingPort }));
-        fetchAppState();
-    };
+        ws = new WebSocket(`${protocol}//${host}`);
 
-    ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        if (data.type === 'snapshot_update' && !userIsScrolling) {
-            renderSnapshot(data);
-        }
-    };
+        ws.onopen = () => {
+            console.log('[App] WS Connected');
+            updateStatus(true);
+            ws.send(JSON.stringify({ type: 'switch_port', port: currentViewingPort }));
+            fetchAppState();
+        };
 
-    ws.onclose = () => {
-        updateStatus(false);
-        setTimeout(connectWebSocket, 2000);
-    };
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
 
-    // Scroll Sync (Client -> Server)
-    let lastScrollTime = 0;
-    chatContainer.addEventListener('scroll', () => {
-        userIsScrolling = true;
-        clearTimeout(userScrollLockUntil);
-        userScrollLockUntil = setTimeout(() => userIsScrolling = false, 1000);
+                // Handle snapshot update
+                if (data.type === 'snapshot_update' && !userIsScrolling) {
+                    // Update current viewing port UI if server indicates a switch (Auto-Hunt)
+                    if (data.port && data.port !== currentViewingPort) {
+                        console.log(`[App] Server forced port switch to ${data.port}`);
+                        currentViewingPort = data.port;
+                        localStorage.setItem('lastViewingPort', currentViewingPort);
+                        if (instanceText) instanceText.textContent = `Port ${data.port}`;
+                        lastHash = ''; // Reset hash to force full re-render on port switch
+                    }
+                    renderSnapshot(data);
+                }
 
-        const now = Date.now();
-        if (now - lastScrollTime > 50 && ws && ws.readyState === WebSocket.OPEN) {
-            lastScrollTime = now;
-            ws.send(JSON.stringify({
-                type: 'scroll_event',
-                scrollTop: chatContainer.scrollTop
-            }));
-        }
-    });
+                // Handle manual/force switch acknowledgment
+                if (data.type === 'force_port_switch' || data.type === 'switched') {
+                    const newPort = data.port || data.newPort;
+                    console.log(`[App] Port switched to ${newPort}`);
+                    currentViewingPort = newPort;
+                    localStorage.setItem('lastViewingPort', currentViewingPort);
+                    if (instanceText) instanceText.textContent = `Port ${newPort}`;
+                    fetchAppState();
+                    lastHash = '';
+                }
+            } catch (e) { console.error('[App] Msg Error', e); }
+        };
+
+        ws.onclose = (e) => {
+            console.warn('[App] WS Closed', e.code);
+            updateStatus(false);
+            if (statusText) statusText.textContent = `Disconnected (${e.code})`;
+            setTimeout(connectWebSocket, 2000);
+        };
+
+        ws.onerror = (err) => {
+            console.error('[App] WS Error', err);
+            if (statusText) statusText.textContent = '❌ WS Err';
+        };
+    } catch (e) {
+        if (statusText) statusText.textContent = '❌ WS Setup Err';
+    }
 }
+
+// Scroll Sync (Client -> Server)
+let lastScrollTime = 0;
+chatContainer.addEventListener('scroll', () => {
+    userIsScrolling = true;
+    clearTimeout(userScrollLockUntil);
+    userScrollLockUntil = setTimeout(() => userIsScrolling = false, 1000);
+
+    const now = Date.now();
+    if (now - lastScrollTime > 50 && ws && ws.readyState === WebSocket.OPEN) {
+        lastScrollTime = now;
+        ws.send(JSON.stringify({
+            type: 'scroll_event',
+            scrollTop: chatContainer.scrollTop
+        }));
+    }
+});
 
 let cachedVLabel = 'V4.1'; // Initial fallback, will be updated by fetchAppState
 
@@ -133,7 +194,31 @@ function updateStatus(connected) {
 
 // Render Logic (V2 Style + CSS Fixes)
 function renderSnapshot(data) {
-    if (!data || !data.html) return;
+    if (!data) return;
+
+    if (data.error || !data.html) {
+        if (!lastHash) { // Only show error if we have nothing else to display
+            const isWrongWindow = data.error === 'wrong_window';
+            chatContent.innerHTML = `
+                <div class="error-state" style="padding: 20px; text-align: center; color: ${isWrongWindow ? '#f59e0b' : '#ef4444'};">
+                    <div style="font-size: 32px; margin-bottom: 12px;">${isWrongWindow ? '💬' : '⚠️'}</div>
+                    <div style="font-weight: bold; margin-bottom: 8px;">${isWrongWindow ? '請開啟 Antigravity 對話框' : (data.error || 'No content found')}</div>
+                    ${isWrongWindow ? `
+                    <div style="font-size: 13px; opacity: 0.8; line-height: 1.6;">
+                        目前連線到的是 VS Code 主視窗，<br>
+                        而不是 Antigravity 的對話框。<br><br>
+                        <strong>請在電腦上：</strong><br>
+                        1. 打開 Antigravity<br>
+                        2. 點擊左側 Chat 圖示<br>
+                        3. 確保對話框是展開的
+                    </div>` : `
+                    <div style="font-size: 11px; margin-top: 10px; opacity: 0.6;">Try switching ports or opening the chat panel.</div>`}
+                </div>
+            `;
+        }
+        return;
+    }
+
     // Re-enabled hash check for UI stability
     if (data.hash === lastHash && !forceScrollToBottom) return;
     lastHash = data.hash;

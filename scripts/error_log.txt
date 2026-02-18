@@ -1,0 +1,11 @@
+[DEBUG-SNAP] Exception in Port 9001 ctx 29: "SyntaxError: missing ) after argument list"
+[DEBUG-SNAP] Exception in Port 9001 ctx 28: "SyntaxError: missing ) after argument list"
+[DEBUG-SNAP] Exception in Port 9001 ctx 27: "SyntaxError: missing ) after argument list"
+[DEBUG-SNAP] Exception in Port 9001 ctx 2: "SyntaxError: missing ) after argument list"
+[DEBUG-SNAP] Exception in Port 9001 ctx 1: "SyntaxError: missing ) after argument list"
+[DEBUG-SNAP] Exception in Port 9001 ctx 2: "SyntaxError: missing ) after argument list"
+[DEBUG-SNAP] Exception in Port 9001 ctx 1: "SyntaxError: missing ) after argument list"
+Snapshot failed: {
+  error: 'no snapshot found',
+  debug: { reason: 'Exhausted all contexts' }
+}

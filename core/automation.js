@@ -6,18 +6,24 @@ export async function captureSnapshot(cdpList) {
             const body = document.body;
             if (!body) return { error: 'No body' };
             
-            // 1. Try to find the best container
-            let target = document.querySelector('#conversation') || 
+            // 1. Try to find the best container (分層匹配)
+            // 精確匹配：真正的 Chat/Conversation 容器
+            const exactTarget = document.querySelector('#conversation') || 
                          document.querySelector('#chat') || 
-                         document.querySelector('#cascade') ||
-                         document.querySelector('main') ||
+                         document.querySelector('#cascade');
+            // 寬泛匹配：一般性 main 容器 (workbench 也有 role="main")
+            const looseTarget = document.querySelector('main') ||
                          document.querySelector('[role="main"]');
+            
+            const target = exactTarget || looseTarget;
+
+            // 標記匹配品質：exact > loose > fallback
+            const matchQuality = exactTarget ? 'exact' : (looseTarget ? 'loose' : 'fallback');
 
             // If we found a target, use it. Otherwise, use body but indicate it's a fallback
             const root = target || body;
             
             // 2. Capture CSS
-            // We iterate all stylesheets to get valid CSS rules
             const rules = [];
             try {
                 for (const sheet of document.styleSheets) {
@@ -39,13 +45,81 @@ export async function captureSnapshot(cdpList) {
             };
 
             // 4. Serialize & Clean HTML
-            const isTruncated = !target; 
+            const isTruncated = !target;
+            const clone = root.cloneNode(true);
+            
+            // A. Aggressively remove interaction/input areas
+            const interactionSelectors = [
+                '.relative.flex.flex-col.gap-8',
+                '.flex.grow.flex-col.justify-start.gap-8',
+                'div[class*="interaction-area"]',
+                '[class*="bg-gray-500"]',
+                '[class*="outline-solid"]',
+                '[contenteditable="true"]',
+                '[placeholder*="Ask anything"]',
+                '.monaco-inputbox',
+                '.quick-input-widget'
+            ];
+
+            interactionSelectors.forEach(selector => {
+                try {
+                    clone.querySelectorAll(selector).forEach(el => {
+                        try {
+                            const isInputArea = el.querySelector('textarea, input, [contenteditable="true"]') || 
+                                                el.getAttribute('placeholder')?.includes('Ask') ||
+                                                el.innerText.includes('Ask anything');
+                            
+                            if (isInputArea || selector === '.monaco-inputbox' || selector === '.quick-input-widget') {
+                                if (selector === '[contenteditable="true"]') {
+                                    const area = el.closest('.relative.flex.flex-col.gap-8') || 
+                                                 el.closest('.flex.grow.flex-col.justify-start.gap-8') ||
+                                                 el.closest('div[id^="interaction"]') ||
+                                                 el.parentElement?.parentElement;
+                                    if (area && area !== clone) area.remove();
+                                    else el.remove();
+                                } else {
+                                    el.remove();
+                                }
+                            }
+                        } catch(e) {}
+                    });
+                } catch(e) {}
+            });
+
+            // B. Text-based cleanup for banners and status bars
+            clone.querySelectorAll('*').forEach(el => {
+                try {
+                    const text = (el.innerText || '').toLowerCase();
+                    if (text.includes('review changes') || text.includes('files with changes') || 
+                        text.includes('context found') || text.includes('ask anything')) {
+                        if (el.children.length < 15 || el.querySelector('button') || el.classList?.contains('justify-between')) {
+                            el.remove();
+                        }
+                    }
+                } catch (e) {}
+            });
+
+            // --- 5. Protocol Sanitization ---
             const badSchemes = ['vscode-file://', 'file://', 'app://', 'devtools://', 'vscode-webview-resource://'];
             const blankGif = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
             
             const cleanText = (text) => {
                 if (!text) return text;
                 let out = text;
+                
+                const brainRegex = /[a-z]:[^"'>]+?\\\\.gemini[\\\\/]+antigravity[\\\\/]+brain[\\\\/]+/gi;
+                out = out.replace(brainRegex, '/brain/');
+
+                if (out.includes('/brain/')) {
+                    const parts = out.split('/brain/');
+                    out = parts[0] + parts.slice(1).map(part => {
+                        const endIndices = ['"', "'", ' ', '>', ')', '\\n'].map(c => part.indexOf(c)).filter(i => i !== -1);
+                        const endIdx = endIndices.length > 0 ? Math.min(...endIndices) : part.length;
+                        const urlPart = part.substring(0, endIdx).replace(/\\\\/g, '/');
+                        return urlPart + part.substring(endIdx);
+                    }).join('/brain/');
+                }
+                
                 if (out.includes('url(')) {
                     out = out.split('url(').map((part, i) => {
                         if (i === 0) return part;
@@ -63,10 +137,10 @@ export async function captureSnapshot(cdpList) {
                 return out;
             };
 
-            root.querySelectorAll('*').forEach(el => {
+            clone.querySelectorAll('*').forEach(el => {
                 for (let i = 0; i < el.attributes.length; i++) {
                     const attr = el.attributes[i];
-                    if (badSchemes.some(s => attr.value.includes(s))) {
+                    if (badSchemes.some(s => attr.value.includes(s)) || attr.value.includes('antigravity/brain')) {
                         el.setAttribute(attr.name, cleanText(attr.value));
                     }
                 }
@@ -74,13 +148,14 @@ export async function captureSnapshot(cdpList) {
             });
 
             const cleanCSS = cleanText(allCSS);
-            let cleanHTML = cleanText(root.outerHTML);
+            let cleanHTML = cleanText(clone.outerHTML);
 
             return {
                 html: isTruncated ? cleanHTML.substring(0, 10000) : cleanHTML, 
                 css: cleanCSS,
                 scrollInfo: scrollInfo,
                 foundTarget: !!target,
+                matchQuality: matchQuality,
                 title: document.title,
                 url: window.location.href
             };
@@ -99,18 +174,25 @@ export async function captureSnapshot(cdpList) {
                 if (ctx.id !== undefined) params.contextId = ctx.id;
 
                 const res = await cdp.call("Runtime.evaluate", params);
+                if (res.exceptionDetails) {
+                    console.error(`[DEBUG-SNAP] Exception in Port ${cdp.port} ctx ${ctx.id}:`, JSON.stringify(res.exceptionDetails.exception?.description || res.exceptionDetails.text));
+                }
 
                 if (res.result?.value) {
                     const val = res.result.value;
-                    if (val.error) continue;
+                    if (val.error) {
+                        console.log(`[DEBUG-SNAP] Error in ctx ${ctx.id}: ${val.error}`);
+                        continue;
+                    }
 
                     candidates.push({
                         html: val.html,
                         css: val.css,
                         scrollInfo: val.scrollInfo,
-                        hash: simpleHash(val.html + (val.scrollInfo?.scrollTop || 0)),
+                        hash: simpleHash(val.html),
                         targetTitle: cdp.title,
                         foundTarget: val.foundTarget,
+                        matchQuality: val.matchQuality || 'fallback',
                         url: val.url
                     });
                 }
@@ -124,15 +206,18 @@ export async function captureSnapshot(cdpList) {
         return { error: 'no snapshot found', debug: { reason: 'Exhausted all contexts' } };
     }
 
-    // Best selection logic: 
-    // 1. Find ones that actually found the chat container (#conversation, etc)
-    const best = candidates.find(c => c.foundTarget) ||
-        // 2. Or pick the most "Antigravity" looking title
-        candidates.find(c => c.targetTitle?.includes('Antigravity') && !c.targetTitle?.includes('Walkthrough')) ||
-        // 3. Fallback to first
-        candidates[0];
+    // Best selection logic (V4.2 - 精準匹配優先):
+    // 匹配品質排序：exact(#conversation/#chat/#cascade) > loose(main/role=main) > fallback(body)
+    // 同品質內，HTML 越長越好（內容越豐富）
+    const qualityScore = { exact: 3, loose: 1, fallback: 0 };
+    candidates.sort((a, b) => {
+        const qa = qualityScore[a.matchQuality] || 0;
+        const qb = qualityScore[b.matchQuality] || 0;
+        if (qa !== qb) return qb - qa;
+        return b.html.length - a.html.length;
+    });
 
-    return best;
+    return candidates[0];
 }
 
 export async function injectScroll(cdpList, options) {

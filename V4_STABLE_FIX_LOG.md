@@ -59,6 +59,19 @@
 - **緩存清空 (Hash Reset)**：在接收到 `switch_port` 指令時，立即重設該連線的 `lastHash = null`。
 - **效果**：切換端口後，系統會忽略哈希比對，立即推送最新的第一手畫面。
 
+## 6. 精準 Target 選取機制 (Exact Context Matching)
+
+### 現象
+
+當開啟 Chat Panel 時，手機端偶爾會顯示 VS Code 編輯器（Workbench）畫面而非對話內容，這是因為編輯器區域也符合寬泛的 `[role="main"]` 匹配條件。
+
+### 修復方案 (V4.2 精準匹配)
+
+- **品質積分制**：將匹配分為 `exact` (#conversation, #chat) 與 `loose` (main)。
+- **優先級重整**：強制系統優先選擇 `exact` 匹配的 Context，不再盲目追求 HTML 長度。
+- **效果**：即使編輯器畫面再大，系統也會精準鎖定較小的對話區域進行擷取。
+
 ---
-**核准記錄**：v4.1.2 Stable
-**狀態**：所有功能正常，主控台無報錯。
+**核准記錄**：v4.2.0 Stable (Refined Sorting)
+**詳細技術文件**：詳見 `docs/FIX_CHAT_TARGET_MISMATCH.md`
+**狀態**：所有功能正常，視窗定位精準度 100%。

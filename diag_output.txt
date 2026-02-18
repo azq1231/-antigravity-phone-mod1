@@ -1,0 +1,45 @@
+?? 閮箸 CDP Port 9000 ????targets ??execution contexts...
+
+?曉 4 ??targets:
+  [0] type=page title="Launchpad" wsUrl=YES
+  [1] type=page title="antigravity_phone_chat_ori - Antigravity - server_v4.js" wsUrl=YES
+  [2] type=worker title="(empty)" wsUrl=YES
+  [3] type=worker title="(empty)" wsUrl=YES
+
+?? Target: "page: Launchpad" | Contexts: 2
+  ? Context 2: name="Electron Isolated Context" origin="vscode-file://vscode-app"
+    ?? title="Launchpad" bodyLen=4243
+    ?? url="vscode-file://vscode-app/d:/Program%20Files/Antigravity/resources/app/out/vs/code/electron-browser/workbench/workbench-j"
+    ?? #conversation=false #chat=false #cascade=false
+    ?? lexical=false main=false
+  ? Context 1: name="" origin="vscode-file://vscode-app"
+    ?? title="Launchpad" bodyLen=4243
+    ?? url="vscode-file://vscode-app/d:/Program%20Files/Antigravity/resources/app/out/vs/code/electron-browser/workbench/workbench-j"
+    ?? #conversation=false #chat=false #cascade=false
+    ?? lexical=false main=false
+
+?? Target: "page: antigravity_phone_chat_ori - Antigravity - server_v4.js" | Contexts: 3
+  ? Context 3: name="" origin="vscode-file://vscode-app"
+    ?? title="" bodyLen=266003
+    ?? url="vscode-file://vscode-app/d%3A/Program%20Files/Antigravity/resources/app/extensions/antigravity/cascade-panel.html"
+    ?? #conversation=true #chat=true #cascade=false
+    ?? lexical=true main=false
+    ??>>> ??CONTEXT ? Chat ??嚗?<<<
+  ? Context 2: name="Electron Isolated Context" origin="vscode-file://vscode-app"
+    ?? title="antigravity_phone_chat_ori - Antigravity - server_v4.js" bodyLen=225427
+    ?? url="vscode-file://vscode-app/d:/Program%20Files/Antigravity/resources/app/out/vs/code/electron-browser/workbench/workbench.h"
+    ?? #conversation=false #chat=false #cascade=false
+    ?? lexical=false main=false
+  ? Context 1: name="" origin="vscode-file://vscode-app"
+    ?? title="antigravity_phone_chat_ori - Antigravity - server_v4.js" bodyLen=225427
+    ?? url="vscode-file://vscode-app/d:/Program%20Files/Antigravity/resources/app/out/vs/code/electron-browser/workbench/workbench.h"
+    ?? #conversation=false #chat=false #cascade=false
+    ?? lexical=false main=false
+
+?? Target: "worker: (no title)" | Contexts: 0
+  ?? 瘝? execution contexts嚗?閰?default context...
+
+?? Target: "worker: (no title)" | Contexts: 0
+  ?? 瘝? execution contexts嚗?閰?default context...
+
+??閮箸摰?

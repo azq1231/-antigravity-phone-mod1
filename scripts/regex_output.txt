@@ -1,0 +1,11 @@
+--- Test 1 ---
+Input: Here is an image: "C:\Users\kuo_1\.gemini\antigravity\brain\9d425b2e-242b-4b10-8175-b9aafe567461\test_image.webp"
+Output: Here is an image: "C:\Users\kuo_1\.gemini\antigravity\brain\9d425b2e-242b-4b10-8175-b9aafe567461\test_image.webp"
+--- Test 2 ---
+Input: background-image: url("C:/Users/kuo_1/.gemini/antigravity/brain/9d425b2e-242b-4b10-8175-b9aafe567461/test_image.webp")
+Output: background-image: url("C:/Users/kuo_1/.gemini/antigravity/brain/9d425b2e-242b-4b10-8175-b9aafe567461/test_image.webp")
+Output: background-image: url("C:/Users/kuo_1/.gemini/antigravity/brain/9d425b2e-242b-4b10-8175-b9aafe567461/test_image.webp")
+--- Test 3 ---
+Input: src="C:\Users\kuo_1/.gemini/antigravity/brain/test.png"
+Output: src="C:\Users\kuo_1/.gemini/antigravity/brain/test.png"
+Output: src="C:\Users\kuo_1/.gemini/antigravity/brain/test.png"

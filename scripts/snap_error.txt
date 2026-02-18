@@ -1,0 +1,4 @@
+Snapshot failed: {
+  error: 'no snapshot found',
+  debug: { reason: 'Exhausted all contexts' }
+}

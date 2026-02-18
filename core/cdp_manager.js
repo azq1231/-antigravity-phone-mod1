@@ -20,10 +20,10 @@ export async function findAllInstances() {
                 const mainTarget =
                     // 1. 優先找包含 workbench 的核心視窗
                     pages.find(t => t.url && t.url.includes('workbench.html')) ||
-                    // 2. 排除啟動器、指南和監測器，找標題有內容的
-                    pages.find(t => t.title && !/Launchpad|Walkthrough|Quota Monitor/i.test(t.title)) ||
-                    // 3. 備援：找 type 是 page 的視窗
-                    pages.find(t => t.type === 'page') ||
+                    // 2. 排除啟動器、指南和監測器，也要排除看起來像檔案總管或代碼開發的視窗
+                    pages.find(t => t.title && !/Launchpad|Walkthrough|Quota Monitor|server_v4\.js|package\.json|node_modules/i.test(t.title)) ||
+                    // 3. 備援：找 type 是 page 且不是空白的視窗
+                    pages.find(t => t.type === 'page' && t.url !== 'about:blank') ||
                     pages[0];
 
                 instances.push({
@@ -129,6 +129,8 @@ export async function getOrConnectParams(port, forceReconnect = false) {
             const inst = instances.find(i => i.port === port);
             if (!inst) throw new Error(`Port ${port} not found`);
 
+            // Connect to ALL targets (Workbench + any other pages)
+            // Chat lives INSIDE Workbench as an iframe/execution context
             const results = [];
             for (const target of inst.targets) {
                 try {
@@ -137,8 +139,7 @@ export async function getOrConnectParams(port, forceReconnect = false) {
                     conn.title = target.title;
                     results.push(conn);
                 } catch (e) {
-                    // Privacy Fix: 避免在日誌中印出視窗標題（因為標題可能包含用戶輸入的對話內容）
-                    console.error(`[CDP] Failed to connect to a target on Port ${port}`);
+                    // Skip failed targets silently
                 }
             }
             if (!results.length) throw new Error('Failed to connect to any target');
