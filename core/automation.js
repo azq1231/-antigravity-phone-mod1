@@ -562,64 +562,86 @@ export async function setModel(cdpList, modelName) {
     const EXP = `(async () => {
         try {
             const allEls = Array.from(document.querySelectorAll('*'));
-            const candidates = allEls.filter(el => ["Gemini", "Claude", "GPT", "Model"].some(k => el.textContent.includes(k)));
-            let modelBtn = null;
-            for (const el of candidates) {
-                let current = el;
-                for (let i = 0; i < 5; i++) {
-                    if (!current) break;
-                    if (current.tagName === 'BUTTON' || window.getComputedStyle(current).cursor === 'pointer') {
-                        if (current.querySelector('svg.lucide-chevron-up') || current.innerText.includes('Model')) { modelBtn = current; break; }
+            
+            // 1. 偵測選單是否已經開啟 (檢查畫面上是否有包含目標文字的選項)
+            const isMenuOpen = () => {
+                const dialog = Array.from(document.querySelectorAll('[role="dialog"], [role="listbox"], div'))
+                    .find(d => d.offsetHeight > 0 && d.innerText.includes('${safeModel}'));
+                return !!dialog;
+            };
+
+            if (!isMenuOpen()) {
+                // 2. 尋找模型選擇按鈕 (增加「代碼過濾器」防止點到專案原始碼)
+                const candidates = allEls.filter(el => {
+                    const t = el.textContent || '';
+                    // 排除明顯是代碼的內容、排除過長的文本、排除 IDE 本身的標籤
+                    if (t.includes('export async function') || t.includes('allEls.filter') || t.length > 150) return false;
+                    return ["Gemini", "Claude", "GPT", "Model", "Sonnet", "Opus"].some(k => t.includes(k));
+                });
+
+                let modelBtn = null;
+                for (const el of candidates) {
+                    let current = el;
+                    for (let i = 0; i < 5; i++) {
+                        if (!current) break;
+                        const style = window.getComputedStyle(current);
+                        const isBtn = current.tagName === 'BUTTON' || style.cursor === 'pointer';
+                        // 額外保險：排除 class 包含編輯器特徵的標籤
+                        const isEditor = current.className && typeof current.className === 'string' && 
+                                        (current.className.includes('monaco') || current.className.includes('editor'));
+                        
+                        if (isBtn && !isEditor) {
+                            if (current.querySelector('svg') || current.innerText.includes('Model')) { 
+                                modelBtn = current; break; 
+                            }
+                        }
+                        current = current.parentElement;
                     }
-                    current = current.parentElement;
+                    if (modelBtn) break;
                 }
-                if (modelBtn) break;
+
+                if (!modelBtn) return { error: 'Model selector not found' };
+                
+                // 3. 打開選單
+                modelBtn.click();
+                await new Promise(r => setTimeout(r, 600)); 
             }
-            if (!modelBtn) return { error: 'Model selector not found' };
-            modelBtn.click();
-            await new Promise(r => setTimeout(r, 600));
-            const visibleDialog = Array.from(document.querySelectorAll('[role="dialog"], div')).find(d => d.offsetHeight > 0 && d.innerText.includes('${safeModel}'));
-            if (!visibleDialog) return { error: 'Model list not opened' };
-            // 4. Select specific model
+
+            // 4. 定位選單並選擇目標
+            const visibleDialog = Array.from(document.querySelectorAll('[role="dialog"], [role="listbox"], div'))
+                .find(d => d.offsetHeight > 0 && d.innerText.includes('${safeModel}'));
+            if (!visibleDialog) return { error: 'Model list not found or not opened' };
+
             const allDialogEls = Array.from(visibleDialog.querySelectorAll('*'));
+
+            // --- 回歸穩定點擊邏輯 ---
+            let target = null;
+            // 過濾出關鍵字，例如 "Sonnet", "4.6", "Gemini", "Flash"
+            const keywords = '${safeModel}'.replace('(Thinking)', '').trim().split(' ').filter(k => k.length >= 2);
             
-            // Priority 1: Exact/Partial Match
-            let target = allDialogEls.find(el => 
-                el.children.length === 0 && el.textContent.includes('${safeModel}')
-            );
-            
-            // Priority 2: Fuzzy Match (ignore text in parentheses, e.g. "Gemini 3 Pro (High)" -> "Gemini 3 Pro")
-            if (!target) {
-                const simpleName = '${safeModel}'.split('(')[0].trim();
-                if (simpleName.length > 2) {
-                    target = allDialogEls.find(el => 
-                        el.children.length === 0 && el.textContent.includes(simpleName)
-                    );
-                }
+            // 優先尋找包含目標文字且「最短」的元素 (通常是最精確的標籤)
+            const matches = allDialogEls.filter(el => {
+                const t = el.textContent || '';
+                return el.offsetHeight > 0 && keywords.every(k => t.includes(k));
+            });
+
+            if (matches.length > 0) {
+                // 排序：優先選文字長度最貼近目標的，防止選到整個列表容器
+                target = matches.sort((a, b) => a.textContent.length - b.textContent.length)[0];
             }
 
             if (target) {
-                // Smart Click: Traverse up to find the clickable container
-                let clickable = target;
-                for (let i = 0; i < 4; i++) {
-                    if (!clickable || clickable === visibleDialog) break;
-                    const style = window.getComputedStyle(clickable);
-                    if (clickable.tagName === 'BUTTON' || style.cursor === 'pointer' || clickable.getAttribute('role') === 'option') {
-                        break;
-                    }
-                    clickable = clickable.parentElement;
+                // 對於有 cursor: pointer 的父級做一次簡單 check，有的話就點父級，沒有就點自己
+                let toClick = target;
+                const parent = target.parentElement;
+                if (parent && window.getComputedStyle(parent).cursor === 'pointer' && parent !== visibleDialog) {
+                    toClick = parent;
                 }
-                const finalTarget = clickable || target;
-
-                // Simulated full interaction chain
-                const opts = { bubbles: true, cancelable: true, view: window };
-                finalTarget.dispatchEvent(new MouseEvent('mousedown', opts));
-                finalTarget.dispatchEvent(new MouseEvent('mouseup', opts));
-                finalTarget.click();
                 
-                return { success: true };
+                toClick.click();
+                return { success: true, selected: '${safeModel}', clickedTag: toClick.tagName };
             }
-            return { error: 'Model option not found' };
+            return { error: 'Model option not found in list' };
         } catch(err) { return { error: err.toString() }; }
     })()`;
     for (const cdp of cdpList) {
@@ -635,31 +657,31 @@ export async function setModel(cdpList, modelName) {
 
 export async function startNewChat(cdpList) {
     const EXP = `(async () => {
-        try {
-            const exactBtn = document.querySelector('[data-tooltip-id="new-conversation-tooltip"]');
-            if (exactBtn) {
-                exactBtn.click();
-                return { success: true, method: 'data-tooltip-id' };
-            }
-
-            const allButtons = Array.from(document.querySelectorAll('button, [role="button"], a'));
-            const plusButtons = allButtons.filter(btn => {
-                if (btn.offsetParent === null) return false;
-                return btn.querySelector('svg.lucide-plus') || 
-                       btn.innerText.toLowerCase().includes('new chat') ||
-                       btn.title?.toLowerCase().includes('new chat');
-            });
-
-            if (plusButtons.length > 0) {
-                plusButtons[0].click();
-                return { success: true, method: 'plus-search' };
-            }
-
-            return { error: 'New Chat button not found' };
-        } catch(err) {
-            return { error: 'JS Error: ' + err.toString() };
+    try {
+        const exactBtn = document.querySelector('[data-tooltip-id="new-conversation-tooltip"]');
+        if (exactBtn) {
+            exactBtn.click();
+            return { success: true, method: 'data-tooltip-id' };
         }
-    })()`;
+
+        const allButtons = Array.from(document.querySelectorAll('button, [role="button"], a'));
+        const plusButtons = allButtons.filter(btn => {
+            if (btn.offsetParent === null) return false;
+            return btn.querySelector('svg.lucide-plus') ||
+                btn.innerText.toLowerCase().includes('new chat') ||
+                btn.title?.toLowerCase().includes('new chat');
+        });
+
+        if (plusButtons.length > 0) {
+            plusButtons[0].click();
+            return { success: true, method: 'plus-search' };
+        }
+
+        return { error: 'New Chat button not found' };
+    } catch (err) {
+        return { error: 'JS Error: ' + err.toString() };
+    }
+})()`;
 
     for (const cdp of cdpList) {
         for (const ctx of cdp.contexts) {
@@ -674,38 +696,38 @@ export async function startNewChat(cdpList) {
 
 export async function getChatHistory(cdpList) {
     const EXP = `(async () => {
-        try {
-            const historyList = document.querySelector('[class*="history-list"], [class*="ConversationList"]');
-            if (!historyList) {
-                // Try searching for any sidebar-like container
-                const sidebar = document.querySelector('nav, [class*="sidebar"]');
-                if (!sidebar) return { error: 'History container not found' };
-                
-                const possibleItems = Array.from(sidebar.querySelectorAll('a, button, [role="link"]'))
-                    .filter(el => el.innerText.length > 5 && el.innerText.length < 100);
-                
-                if (possibleItems.length > 0) {
-                     return { success: true, items: possibleItems.map((el, i) => ({ id: i, title: el.innerText.trim(), active: false })) };
-                }
-                return { error: 'No history items found in sidebar' };
+    try {
+        const historyList = document.querySelector('[class*="history-list"], [class*="ConversationList"]');
+        if (!historyList) {
+            // Try searching for any sidebar-like container
+            const sidebar = document.querySelector('nav, [class*="sidebar"]');
+            if (!sidebar) return { error: 'History container not found' };
+
+            const possibleItems = Array.from(sidebar.querySelectorAll('a, button, [role="link"]'))
+                .filter(el => el.innerText.length > 5 && el.innerText.length < 100);
+
+            if (possibleItems.length > 0) {
+                return { success: true, items: possibleItems.map((el, i) => ({ id: i, title: el.innerText.trim(), active: false })) };
             }
-
-            const items = Array.from(historyList.querySelectorAll('[class*="history-item"], [class*="ConversationListItem"]'))
-                .filter(el => el.offsetParent !== null)
-                .map((el, idx) => {
-                    const titleEl = el.querySelector('[class*="title"], [class*="text-ellipsis"]');
-                    return {
-                        id: idx,
-                        title: (titleEl ? titleEl.innerText : el.innerText).trim().substring(0, 100),
-                        active: el.classList.contains('active') || !!el.querySelector('[class*="active"]')
-                    };
-                });
-
-            return { success: true, items };
-        } catch(err) {
-            return { error: err.toString() };
+            return { error: 'No history items found in sidebar' };
         }
-    })()`;
+
+        const items = Array.from(historyList.querySelectorAll('[class*="history-item"], [class*="ConversationListItem"]'))
+            .filter(el => el.offsetParent !== null)
+            .map((el, idx) => {
+                const titleEl = el.querySelector('[class*="title"], [class*="text-ellipsis"]');
+                return {
+                    id: idx,
+                    title: (titleEl ? titleEl.innerText : el.innerText).trim().substring(0, 100),
+                    active: el.classList.contains('active') || !!el.querySelector('[class*="active"]')
+                };
+            });
+
+        return { success: true, items };
+    } catch (err) {
+        return { error: err.toString() };
+    }
+})()`;
 
     for (const cdp of cdpList) {
         for (const ctx of cdp.contexts) {
@@ -720,23 +742,23 @@ export async function getChatHistory(cdpList) {
 
 export async function selectChat(cdpList, index) {
     const EXP = `(async () => {
-        try {
-            const historyList = document.querySelector('[class*="history-list"], [class*="ConversationList"]');
-            const sidebar = historyList || document.querySelector('nav, [class*="sidebar"]');
-            if (!sidebar) return { error: 'History container not found' };
+    try {
+        const historyList = document.querySelector('[class*="history-list"], [class*="ConversationList"]');
+        const sidebar = historyList || document.querySelector('nav, [class*="sidebar"]');
+        if (!sidebar) return { error: 'History container not found' };
 
-            const items = Array.from(sidebar.querySelectorAll('[class*="history-item"], [class*="ConversationListItem"], a, button, [role="link"]'))
-                .filter(el => el.offsetParent !== null && el.innerText.length > 5);
-            
-            if (items[${index}]) {
-                items[${index}].click();
-                return { success: true };
-            }
-            return { error: 'Item not found at index ${index}' };
-        } catch(err) {
-            return { error: err.toString() };
-        }
-    })()`;
+        const items = Array.from(sidebar.querySelectorAll('[class*="history-item"], [class*="ConversationListItem"], a, button, [role="link"]'))
+            .filter(el => el.offsetParent !== null && el.innerText.length > 5);
+
+        if (items[${index}]) {
+    items[${index}].click();
+    return { success: true };
+}
+return { error: 'Item not found at index ${index}' };
+        } catch (err) {
+    return { error: err.toString() };
+}
+    }) ()`;
 
     for (const cdp of cdpList) {
         for (const ctx of cdp.contexts) {
