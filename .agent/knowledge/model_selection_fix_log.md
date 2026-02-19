@@ -24,10 +24,20 @@
 ## 🧰 診斷工具
 
 為了以後快速定位類似問題，保留以下腳本：
+
 * `scripts/scan_model_menu.js`: 自動遍歷並輸出下拉選單中所有項目的精確 HTML 結構與 textContent。
 * `scripts/test_model_selection.js`: 獨立測試選單定位邏輯，並回傳擬點擊目標的 Metadata（Tag, Class, Role）。
 
 ## ⚠️ 注意事項
 
-- 未來若 UI 架構變動（如改用 Shadow DOM），需更新 `Runtime.evaluate` 中的搜尋範圍。
-* 始終確保關鍵字提取邏輯已過濾掉 `(Thinking)` 等輔助性標記。
+* 未來若 UI 架構變動（如改用 Shadow DOM），需更新 `Runtime.evaluate` 中的搜尋範圍。
+
+## 🛡️ 輸出截斷預防準則 (Output Truncation Protocol)
+
+為了防止大規模掃描（如 DOM 遍歷）產生的日誌被截斷，**嚴禁**直接呼叫大型偵錯輸出。
+
+1. **強制執行器**：使用 `node scripts/smart_run.js <cmd>` 替代直接執行。
+2. **檔案優先**：所有輸出優先存入 `logs/last_run.log`。
+3. **分片讀取**：AI 在回報結果前，必須先檢查 `smart_run.js` 的行數統計，若超過 100 行，應呼叫 `view_file` 分段解析，不可依賴終端機輸出。
+
+- 始終確保關鍵字提取邏輯已過濾掉 `(Thinking)` 等輔助性標記。
