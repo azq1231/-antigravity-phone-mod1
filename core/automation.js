@@ -107,17 +107,12 @@ export async function captureSnapshot(cdpList) {
                 if (!text) return text;
                 let out = text;
                 
-                const brainRegex = /[a-z]:[^"'>]+?\\\\.gemini[\\\\/]+antigravity[\\\\/]+brain[\\\\/]+/gi;
+                const brainRegex = /[a-z]:[^"'> ]+?\\.gemini[\\\\\\/]+antigravity[\\\\\\/]+brain[\\\\\\/]+/gi;
                 out = out.replace(brainRegex, '/brain/');
 
                 // Map Antigravity resources to virtual endpoint
-                // Match optional URI scheme + optional slashes + [Drive Letter]:\Program Files
-                // Safely initialized with new RegExp to ensure it crosses the CDP evaluation boundary without syntax errors
-                const resourceRegex = new RegExp('(?:[a-zA-Z0-9+.-]+://[^"\\'>\\\\s]*?(?=[a-zA-Z](:|%3A)))?(?:/+)?([a-zA-Z](:|%3A)(?:[\\\\\\\\/]|%2F|%5C|%20|\\\\s)+Program(?:[\\\\\\\\/]|%2F|%5C|%20|\\\\s)+Files)', 'gi');
-                
+                const resourceRegex = /(?:[a-zA-Z0-9+.-]+:\\/\\/[^"'>\\s]*?(?=[a-zA-Z](:|%3A)))?(?:\\/+)?([a-zA-Z](:|%3A)(?:[\\\\\\/]|%2F|%5C|%20|\\s)+Program(?:[\\\\\\/]|%2F|%5C|%20|\\s)+Files)/gi;
                 out = out.replace(resourceRegex, '/vscode-resources');
-                
-                // Clean up any double slashes that might have formed (protocol-relative bug fix)
                 out = out.replace(/\\/\\/vscode-resources/gi, '/vscode-resources');
 
                 if (out.includes('/brain/')) {

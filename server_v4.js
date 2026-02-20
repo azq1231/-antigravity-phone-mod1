@@ -68,8 +68,20 @@ async function createServer() {
     app.get('/', (req, res) => res.sendFile(join(__dirname, 'public', 'index_v4.html')));
     app.use(express.static(join(__dirname, 'public')));
 
-    const vscodeResourcesPath = "D:/Program Files/Antigravity/resources/app";
-    if (fs.existsSync(vscodeResourcesPath)) app.use('/vscode-resources', express.static(vscodeResourcesPath));
+    // Map VS Code resources (icons, etc.) to virtual endpoint
+    // The regex in automation.js replaces up to "Program Files", so the root here should be "Program Files"
+    const driveLetters = ['D', 'C', 'E'];
+    for (const drive of driveLetters) {
+        const p = `${drive}:/Program Files`;
+        if (fs.existsSync(p)) {
+            app.use('/vscode-resources', (req, res, next) => {
+                res.header('Access-Control-Allow-Origin', '*');
+                next();
+            }, express.static(p));
+            console.log(`[V4] Serving VSCode resources from: ${p}`);
+            break;
+        }
+    }
 
     let tickCount = 0;
     setInterval(async () => {

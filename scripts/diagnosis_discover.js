@@ -40,13 +40,37 @@ async function diagnose() {
 
             if (hasAbsolute) {
                 console.error("❌ Found leaked absolute paths in HTML!");
-                // Let's find exactly what's leaking
                 const leaks = snapshot.html.match(/[a-z]:[^"'> ]+Program[^"'> ]+/gi) || [];
                 console.log("Leaked samples:", leaks.slice(0, 3));
             } else if (hasMapped) {
                 console.log("✅ Verified: Absolute paths mapped to /vscode-resources/");
+
+                // Real-world connectivity test (Check if the server can actually serve it)
+                const sampleIcon = "http://localhost:3004/vscode-resources/Antigravity/resources/app/extensions/theme-symbols/src/icons/files/document.svg";
+                console.log(`🔗 Testing resource availability: ${sampleIcon}`);
+                try {
+                    const res = await fetch(sampleIcon, { method: 'HEAD' });
+                    if (res.ok) {
+                        console.log("✅ Resource is ACCESSIBLE (200 OK)");
+                    } else {
+                        console.error(`❌ Resource is NOT accessible (${res.status} ${res.statusText})`);
+                        console.error(`   URL tried: ${sampleIcon}`);
+                        console.error("   Reason: Server-side root for /vscode-resources in server_v4.js may be misaligned with the path suffix.");
+                    }
+                } catch (e) {
+                    console.log(`ℹ️ Connectivity test failed: ${e.message} (Is server running on :3004?)`);
+                }
+            }
+
+            // Check Brain paths
+            const hasBrainAbsolute = snapshot.html.includes(".gemini") || snapshot.html.includes("antigravity/brain");
+            const hasBrainMapped = snapshot.html.includes("/brain/");
+            if (hasBrainAbsolute) {
+                console.error("❌ Found leaked absolute brain paths!");
+            } else if (hasBrainMapped) {
+                console.log("✅ Verified: Brain paths mapped to /brain/");
             } else {
-                console.log("ℹ️ No Antigravity resource paths found in this snapshot.");
+                console.log("ℹ️ No brain paths found in snapshot.");
             }
         }
 
