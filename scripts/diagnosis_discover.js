@@ -51,13 +51,13 @@ async function diagnose() {
         }
 
         // Test 3: Model Switching
-        console.log("\n--- Test 3: Model Switching ---");
-        if (!modelResult.error && modelResult.models.length > 0) {
-            const testModel = modelResult.models[0];
-            console.log(`🔄 Attempting to switch to: "${testModel}"`);
-            const switchResult = await setModel(conns, testModel);
-            console.log("📊 Switch Result:", JSON.stringify(switchResult, null, 2));
-        }
+        // console.log("\n--- Test 3: Model Switching ---");
+        // if (!modelResult.error && modelResult.models.length > 0) {
+        //     const testModel = modelResult.models[0];
+        //     console.log(`🔄 Attempting to switch to: "${testModel}"`);
+        //     // const switchResult = await setModel(conns, testModel);
+        //     // console.log("📊 Switch Result:", JSON.stringify(switchResult, null, 2));
+        // }
 
     } catch (e) {
         console.error("💥 FATAL DIAGNOSIS ERROR:", e.message);
