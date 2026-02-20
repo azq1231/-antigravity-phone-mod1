@@ -30,7 +30,11 @@ async function createServer() {
     const wss = new WebSocketServer({ server });
 
     app.use((req, res, next) => {
-        console.log(`[HTTP] ${req.method} ${req.url} from ${req.ip}`);
+        // 忽略靜態資源的日誌，減少終端機噪音
+        const isStatic = /\.(svg|png|jpg|jpeg|gif|css|js|woff|ttf)$/.test(req.url);
+        if (!isStatic) {
+            console.log(`[HTTP] ${req.method} ${req.url} from ${req.ip}`);
+        }
         next();
     });
 

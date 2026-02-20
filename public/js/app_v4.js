@@ -458,14 +458,42 @@ document.querySelector('.setting-chip:nth-child(1)').onclick = () => { // Mode
     });
 };
 
-document.querySelector('.setting-chip:nth-child(2)').onclick = () => { // Model
-    showModal('Select Model', MODELS, async (val) => {
-        await fetchWithAuth(`/set-model?port=${currentViewingPort}`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: val })
+document.querySelector('.setting-chip:nth-child(2)').onclick = async () => { // Model
+    statusText.textContent = '🔍 Scanning models...';
+    try {
+        const res = await fetchWithAuth(`/available-models?port=${currentViewingPort}`);
+        const data = await res.json();
+
+        if (data.models && data.models.length > 0) {
+            showModal('Select Model (Detected)', data.models, async (val) => {
+                statusText.textContent = `🚀 Switching to ${val}...`;
+                await fetchWithAuth(`/set-model?port=${currentViewingPort}`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: val })
+                });
+                setTimeout(fetchAppState, 1000);
+            });
+        } else {
+            console.warn('Dynamic discovery failed, using fallback list');
+            showModal('Select Model (Fallback)', MODELS, async (val) => {
+                await fetchWithAuth(`/set-model?port=${currentViewingPort}`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: val })
+                });
+                setTimeout(fetchAppState, 1000);
+            });
+        }
+    } catch (e) {
+        console.error('Discovery error', e);
+        showModal('Select Model (Fallback)', MODELS, async (val) => {
+            await fetchWithAuth(`/set-model?port=${currentViewingPort}`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: val })
+            });
+            setTimeout(fetchAppState, 1000);
         });
-        setTimeout(fetchAppState, 1000);
-    });
+    } finally {
+        statusText.textContent = `Live (${cachedVLabel})`;
+    }
 };
+
 
 document.querySelector('.setting-chip:nth-child(3)').onclick = async () => { // Instance
     const res = await fetchWithAuth('/slots');

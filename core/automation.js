@@ -110,6 +110,10 @@ export async function captureSnapshot(cdpList) {
                 const brainRegex = /[a-z]:[^"'>]+?\\\\.gemini[\\\\/]+antigravity[\\\\/]+brain[\\\\/]+/gi;
                 out = out.replace(brainRegex, '/brain/');
 
+                // Map Antigravity resources to virtual endpoint
+                const resourceRegex = /[a-z]:([\\\\/]|%20|\s)+Program([\\\\/]|%20|\s)+Files/gi;
+                out = out.replace(resourceRegex, '/vscode-resources');
+
                 if (out.includes('/brain/')) {
                     const parts = out.split('/brain/');
                     out = parts[0] + parts.slice(1).map(part => {
@@ -140,8 +144,14 @@ export async function captureSnapshot(cdpList) {
             clone.querySelectorAll('*').forEach(el => {
                 for (let i = 0; i < el.attributes.length; i++) {
                     const attr = el.attributes[i];
-                    if (badSchemes.some(s => attr.value.includes(s)) || attr.value.includes('antigravity/brain')) {
-                        el.setAttribute(attr.name, cleanText(attr.value));
+                    const val = attr.value;
+                    const isBad = badSchemes.some(s => val.includes(s)) || 
+                                 val.includes('antigravity') || 
+                                 val.includes('Program Files') ||
+                                 val.includes('Program%20Files');
+                    
+                    if (isBad) {
+                        el.setAttribute(attr.name, cleanText(val));
                     }
                 }
                 if (el.tagName === 'STYLE') el.textContent = cleanText(el.textContent);
@@ -604,7 +614,7 @@ export async function setModel(cdpList, modelName) {
                 
                 // 3. 打開選單
                 modelBtn.click();
-                await new Promise(r => setTimeout(r, 600)); 
+                await new Promise(r => setTimeout(r, 1000)); 
             }
 
             // 4. 定位選單並選擇目標
@@ -616,32 +626,75 @@ export async function setModel(cdpList, modelName) {
 
             // --- 回歸穩定點擊邏輯 ---
             let target = null;
-            // 過濾出關鍵字，例如 "Sonnet", "4.6", "Gemini", "Flash"
-            const keywords = '${safeModel}'.replace('(Thinking)', '').trim().split(' ').filter(k => k.length >= 2);
+            const isThinking = '${safeModel}'.includes('(Thinking)');
+            const baseName = '${safeModel}'.replace('(Thinking)', '').trim();
             
-            // 優先尋找包含目標文字且「最短」的元素 (通常是最精確的標籤)
-            const matches = allDialogEls.filter(el => {
-                const t = el.textContent || '';
-                return el.offsetHeight > 0 && keywords.every(k => t.includes(k));
-            });
-
-            if (matches.length > 0) {
-                // 排序：優先選文字長度最貼近目標的，防止選到整個列表容器
-                target = matches.sort((a, b) => a.textContent.length - b.textContent.length)[0];
+            // Step A: 精確文本匹配
+            target = allDialogEls.find(el => (el.innerText || "").trim() === '${safeModel}' && el.offsetHeight > 0);
+            
+            // Step B: 關鍵字+Thinking狀態匹配
+            if (!target) {
+                const keywords = baseName.split(' ').filter(k => k.length >= 2);
+                const matches = allDialogEls.filter(el => {
+                    const t = (el.innerText || el.textContent || '').trim();
+                    const hasKeywords = keywords.every(k => t.includes(k));
+                    const thinkingMatch = isThinking ? t.includes('Thinking') : !t.includes('Thinking');
+                    return el.offsetHeight > 0 && hasKeywords && thinkingMatch;
+                });
+                if (matches.length > 0) {
+                    target = matches.sort((a, b) => a.textContent.length - b.textContent.length)[0];
+                }
             }
 
             if (target) {
-                // 對於有 cursor: pointer 的父級做一次簡單 check，有的話就點父級，沒有就點自己
-                let toClick = target;
-                const parent = target.parentElement;
-                if (parent && window.getComputedStyle(parent).cursor === 'pointer' && parent !== visibleDialog) {
-                    toClick = parent;
+                // 1. 尋找最具互動性的容器 (如 VS Code 的 monaco-list-row)
+                let current = target;
+                for (let i = 0; i < 5; i++) {
+                    if (!current || current === visibleDialog) break;
+                    if (current.getAttribute('role') === 'option' || 
+                        current.classList.contains('monaco-list-row') || 
+                        current.tagName === 'BUTTON' ||
+                        current.className.includes('item-content')) {
+                        target = current;
+                        break;
+                    }
+                    current = current.parentElement;
                 }
+
+                // 2. 模擬完整互動序列
+                target.scrollIntoView({ block: 'center', inline: 'center' });
+                if (target.focus) target.focus();
+                await new Promise(r => setTimeout(r, 100));
+
+                const rect = target.getBoundingClientRect();
+                const x = rect.left + rect.width / 2;
+                const y = rect.top + rect.height / 2;
+                const opts = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y };
+
+                // A. 滑鼠序列
+                target.dispatchEvent(new MouseEvent('mousedown', opts));
+                await new Promise(r => setTimeout(r, 50));
+                target.dispatchEvent(new MouseEvent('mouseup', opts));
+                target.click();
+                target.dispatchEvent(new MouseEvent('click', opts));
                 
-                toClick.click();
-                return { success: true, selected: '${safeModel}', clickedTag: toClick.tagName };
+                // B. 鍵盤序列 (備援，這在 VS Code 菜單中非常有效)
+                target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
+                
+                // C. 強制關閉選單 (解決選單殘留問題)
+                await new Promise(r => setTimeout(r, 200));
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+                document.body.click();
+                
+                return { 
+                    success: true, 
+                    selected: '${safeModel}', 
+                    clickedTag: target.tagName,
+                    clickedClass: target.className.substring(0, 50),
+                    rect: { x, y }
+                };
             }
-            return { error: 'Model option not found in list' };
+            return { error: 'Model option not found in list', debug: { keywords, isThinking, matchesCount: matches.length } };
         } catch(err) { return { error: err.toString() }; }
     })()`;
     for (const cdp of cdpList) {
@@ -654,6 +707,145 @@ export async function setModel(cdpList, modelName) {
     }
     return { error: 'Failed' };
 }
+
+export async function discoverModels(cdpList) {
+    const EXP = `(async () => {
+        const debug = { steps: [] };
+        try {
+            // 1. Find the model selector button
+            const KNOWN_KEYWORDS = ["Gemini", "Claude", "GPT", "Model", "Sonnet", "Opus"];
+            const allEls = Array.from(document.querySelectorAll('*'));
+            
+            const candidates = allEls.filter(el => {
+                const t = (el.innerText || el.textContent || '').trim();
+                if (t.includes('export async function') || t.length > 100 || t.length < 2) return false;
+                return KNOWN_KEYWORDS.some(k => t.includes(k)) && el.offsetHeight > 0;
+            });
+            debug.steps.push({ name: 'find_candidates', count: candidates.length });
+
+            let modelBtn = null;
+            for (const el of candidates) {
+                let current = el;
+                for (let i = 0; i < 6; i++) {
+                    if (!current) break;
+                    const style = window.getComputedStyle(current);
+                    const isInterative = current.tagName === 'BUTTON' || style.cursor === 'pointer' || current.getAttribute('role') === 'button';
+                    if (isInterative) {
+                        if (current.querySelector('svg') || current.innerText.includes('Model') || /V\\d+\\.\\d+/.test(current.innerText)) {
+                            modelBtn = current;
+                            break;
+                        }
+                    }
+                    current = current.parentElement;
+                }
+                if (modelBtn) break;
+            }
+
+            if (!modelBtn) return { error: 'Model selector button not found', debug };
+            debug.steps.push({ name: 'click_button', text: modelBtn.innerText.substring(0, 30) });
+
+            // 2. Click to open
+            modelBtn.click();
+            await new Promise(r => setTimeout(r, 1000));
+
+            // 3. Find the dialog
+            const dialogSelectors = '[role="dialog"], [role="listbox"], .monaco-menu-container, [class*="menu"], [class*="dropdown"]';
+            const dialogs = Array.from(document.querySelectorAll(dialogSelectors))
+                .filter(d => d.offsetHeight > 0 && d !== modelBtn && !d.contains(modelBtn));
+            
+            debug.steps.push({ name: 'find_dialogs', count: dialogs.length });
+
+            const visibleDialog = dialogs.find(d => {
+                const txt = d.innerText || '';
+                return (txt.includes('Claude') || txt.includes('Gemini') || txt.includes('GPT'));
+            }) || dialogs[0];
+
+            if (!visibleDialog) return { error: 'Model list dialog not found', debug, htmlSnippet: document.body.innerHTML.substring(0, 500) };
+
+            // 4. Extract all valid options
+            let rawOptions = Array.from(visibleDialog.querySelectorAll('*'))
+                .filter(el => {
+                    const text = (el.innerText || "").trim();
+                    if (!text || text.length < 3 || text.length > 80) return false;
+                    
+                    const style = window.getComputedStyle(el);
+                    const isClickable = el.tagName === 'BUTTON' || 
+                                       style.cursor === 'pointer' || 
+                                       el.getAttribute('role') === 'option' ||
+                                       el.className.includes('menu-item');
+
+                    const noise = ["Search", "Model", "Close", "Back", "×", "✓", "New", "NEW"];
+                    if (noise.some(n => text === n)) return false;
+
+                    return isClickable && el.offsetHeight > 0;
+                })
+                .map(el => {
+                    // Clone to remove children that might be badges
+                    const clone = el.cloneNode(true);
+                    Array.from(clone.children).forEach(child => {
+                        const ct = child.innerText.trim().toUpperCase();
+                        if (ct === 'NEW' || ct === 'NEW!' || child.classList.contains('badge')) child.remove();
+                    });
+                    let t = clone.innerText.trim();
+                    // Final cleanup of remaining "New" text and newlines
+                    t = t.replace(/\\n/g, ' ').replace(/\\s*New$/i, '').trim();
+                    return t;
+                })
+                .filter(v => v.length > 3);
+
+            // Deduplicate: If one is a substring of another, keep the longer one
+            rawOptions.sort((a, b) => b.length - a.length);
+            const options = [];
+            for (const opt of rawOptions) {
+                if (!options.some(existing => existing.includes(opt) || opt.includes(existing))) {
+                    options.push(opt);
+                } else if (options.some(existing => existing.includes(opt))) {
+                    // Skip, already have a more complete name
+                } else {
+                    // Current one is better (longer/more specific coverage) - shouldn't happen due to sort
+                }
+            }
+            // Final deduplicate for exact matches
+            const finalOptions = options.filter((v, i, a) => a.indexOf(v) === i);
+
+            debug.steps.push({ name: 'extract_options', count: options.length });
+
+            // 5. Close the menu
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+            setTimeout(() => document.body.click(), 100);
+
+            return { models: finalOptions, debug };
+        } catch(err) {
+            return { error: err.toString(), debug };
+        }
+    })()`;
+
+
+    for (const cdp of cdpList) {
+        const ctxIds = cdp.contexts.length > 0 ? cdp.contexts.map(c => c.id) : [undefined];
+        for (const ctxId of ctxIds) {
+            try {
+                const params = { expression: EXP, returnByValue: true, awaitPromise: true };
+                if (ctxId !== undefined) params.contextId = ctxId;
+                const res = await cdp.call("Runtime.evaluate", params);
+
+                if (res.exceptionDetails) {
+                    console.error(`❌ [discoverModels] JS Execution Error in Port ${cdp.port}:`, res.exceptionDetails.exception?.description || res.exceptionDetails.text);
+                    continue;
+                }
+
+                if (res.result?.value?.models) return res.result.value;
+                if (res.result?.value?.error) {
+                    console.warn(`⚠️ [discoverModels] Logic Error on Port ${cdp.port}:`, res.result.value.error);
+                }
+            } catch (e) {
+                console.error(`❌ [discoverModels] CDP Communication Error:`, e.message);
+            }
+        }
+    }
+    return { error: 'Model discovery failed' };
+}
+
 
 export async function startNewChat(cdpList) {
     const EXP = `(async () => {

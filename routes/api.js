@@ -3,7 +3,7 @@ import fs from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { activeConnections, getOrConnectParams, findAllInstances } from '../core/cdp_manager.js';
-import { captureSnapshot, injectMessage, getAppState, setMode, setModel, injectScroll, injectImage, startNewChat, getChatHistory, selectChat } from '../core/automation.js';
+import { captureSnapshot, injectMessage, getAppState, setMode, setModel, discoverModels, injectScroll, injectImage, startNewChat, getChatHistory, selectChat } from '../core/automation.js';
 import { spawnInstance, killInstance } from '../core/instance_manager.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -83,6 +83,17 @@ router.post('/set-model', async (req, res) => {
         res.json(result);
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+router.get('/available-models', async (req, res) => {
+    try {
+        const port = parseInt(req.query.port) || 9000;
+        const conn = await getOrConnectParams(port);
+        // Corrected: conn is already an array of CDPs from getOrConnectParams
+        const result = await discoverModels(conn);
+        res.json(result);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 
 router.post('/new-chat', async (req, res) => {
     try {

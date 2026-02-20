@@ -1,0 +1,12 @@
+?? [DIAGNOSIS] Starting Comprehensive Diagnosis...
+
+--- Test 1: Model Discovery ---
+??CDP Connected (Targets: 2 )
+??[discoverModels] JS Execution Error in Port 9000: SyntaxError: Invalid regular expression: missing /
+??[discoverModels] JS Execution Error in Port 9000: SyntaxError: Invalid regular expression: missing /
+??[discoverModels] JS Execution Error in Port 9000: SyntaxError: Invalid regular expression: missing /
+??[discoverModels] JS Execution Error in Port 9000: SyntaxError: Invalid regular expression: missing /
+??Model Discovery Failed: Model discovery failed
+
+--- Test 2: Path Sanitization ---
+?對? No Antigravity resource paths found in this snapshot.

@@ -1,0 +1,36 @@
+?? [DIAGNOSIS] Starting Comprehensive Diagnosis...
+??CDP Connected (Targets: 2 )
+
+--- Test 4: App State ---
+?? App State Found: {
+  "mode": "Fast",
+  "model": "G3 Pro: 100% | G3 Flash: 100% | Claude: 40%"
+}
+
+--- Test 1: Model Discovery ---
+??Models Found: [
+  'Claude Sonnet 4.6 (Thinking)',
+  'Claude Opus 4.6 (Thinking)',
+  'Gemini 3.1 Pro (High)',
+  'GPT-OSS 120B (Medium)',
+  'Gemini 3.1 Pro (Low)',
+  'Gemini 3 Pro (High)',
+  'Gemini 3 Pro (Low)',
+  'Gemini 3 Flash'
+]
+
+--- Test 2: Path Sanitization ---
+?對? No Antigravity resource paths found in this snapshot.
+
+--- Test 3: Model Switching ---
+?? Attempting to switch to: "Claude Sonnet 4.6 (Thinking)"
+?? Switch Result: {
+  "success": true,
+  "selected": "Claude Sonnet 4.6 (Thinking)",
+  "clickedTag": "DIV",
+  "clickedClass": "px-2 py-1 flex items-center justify-between cursor",
+  "rect": {
+    "x": 575.9942932128906,
+    "y": 655.0160503387451
+  }
+}
