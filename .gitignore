@@ -44,7 +44,11 @@ SOCIAL_PROMOTION.md
 # Testing / Temp Data
 tmp_chrome_data/
 archive/
+*.txt
+*.html
+!public/**/*.html
 scripts/debug_screen.png
 scripts/probe_result.txt
 playwright-report/
 test-results/
+scripts/perf_baseline.json

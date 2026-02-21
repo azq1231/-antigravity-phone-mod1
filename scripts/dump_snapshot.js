@@ -3,15 +3,18 @@ import { captureSnapshot } from '../core/automation.js';
 import fs from 'fs';
 
 async function dump() {
-    const conn = await getOrConnectParams(9001);
-    const snap = await captureSnapshot(conn);
-    if (snap && snap.html) {
-        fs.writeFileSync('debug_snapshot_9001.html', snap.html);
-        console.log('Snapshot dumped to debug_snapshot_9001.html');
-    } else {
-        console.log('Snapshot failed:', snap);
+    try {
+        const conns = await getOrConnectParams(9000);
+        const snapshot = await captureSnapshot(conns);
+        if (snapshot.html) {
+            console.log("HTML length:", snapshot.html.length);
+            fs.writeFileSync('last_snap_dump.html', snapshot.html);
+            console.log("Dumped to last_snap_dump.html");
+        } else {
+            console.log("No HTML in snapshot:", snapshot.error);
+        }
+    } catch (e) {
+        console.error(e);
     }
-    process.exit(0);
 }
-
 dump();
