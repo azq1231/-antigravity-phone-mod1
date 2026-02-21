@@ -1,0 +1,7 @@
+tunnel: 190d4402-d9d1-4f93-8f1e-ab1050ec9744
+credentials-file: C:\Users\kuo_1\.cloudflared\190d4402-d9d1-4f93-8f1e-ab1050ec9744.json
+
+ingress:
+  - hostname: ag.monyangood.com
+    service: http://localhost:3004
+  - service: http_status:404
