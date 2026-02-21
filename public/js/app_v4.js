@@ -39,6 +39,7 @@ const newChatBtn = document.getElementById('newChatBtn');
 const historyBtn = document.getElementById('historyBtn');
 const modalOverlay = document.getElementById('modalOverlay');
 const modalList = document.getElementById('modalList');
+const mainTitle = document.getElementById('mainTitle');
 
 // State
 let ws = null;
@@ -50,6 +51,7 @@ let forceScrollToBottom = false;
 let userScrollLockUntil = 0;
 let pingTimeout = null;
 let pendingImage = null;
+let currentDisplayTitle = `Port ${currentViewingPort}`;
 
 console.log('[DEBUG] imageInput element:', imageInput);
 console.log('[DEBUG] attachBtn element:', attachBtn);
@@ -77,15 +79,22 @@ async function fetchAppState() {
         }
         instanceText.textContent = `Port ${currentViewingPort}`;
 
+        if (data.title && data.title !== 'Antigravity') {
+            currentDisplayTitle = data.title;
+        } else {
+            currentDisplayTitle = `Port ${currentViewingPort}`;
+        }
+
+        if (mainTitle) mainTitle.textContent = currentDisplayTitle;
+
         // Dynamic Version Injection (Single Source of Truth)
         if (data.version) {
             const vMajorMinor = data.version.split('.').slice(0, 2).join('.');
             const vLabel = `V${vMajorMinor}`;
             cachedVLabel = vLabel;
 
-            document.title = `Antigravity ${vLabel} Stable`;
-            const headerTitle = document.querySelector('.header h1');
-            if (headerTitle) headerTitle.textContent = `Antigravity ${vLabel}`;
+            document.title = `${currentDisplayTitle} - Antigravity ${vLabel}`;
+            if (mainTitle) mainTitle.textContent = currentDisplayTitle;
 
             if (messageInput) messageInput.placeholder = `Message ${vLabel}...`;
 
@@ -140,6 +149,9 @@ function connectWebSocket() {
                         currentViewingPort = data.port;
                         localStorage.setItem('lastViewingPort', currentViewingPort);
                         if (instanceText) instanceText.textContent = `Port ${data.port}`;
+                        // Title will be updated by fetchAppState soon, but we can set a placeholder
+                        currentDisplayTitle = `Port ${data.port}`;
+                        if (mainTitle) mainTitle.textContent = currentDisplayTitle;
                         lastHash = ''; // Reset hash to force full re-render on port switch
                     }
                     renderSnapshot(data);
@@ -152,6 +164,8 @@ function connectWebSocket() {
                     currentViewingPort = newPort;
                     localStorage.setItem('lastViewingPort', currentViewingPort);
                     if (instanceText) instanceText.textContent = `Port ${newPort}`;
+                    currentDisplayTitle = `Port ${newPort}`;
+                    if (mainTitle) mainTitle.textContent = currentDisplayTitle;
                     fetchAppState();
                     lastHash = '';
                 }
@@ -555,7 +569,9 @@ document.querySelector('.setting-chip:nth-child(3)').onclick = async () => { // 
                     localStorage.setItem('lastViewingPort', targetPort);
 
                     // Update UI state immediately
-                    instanceText.textContent = `Port ${targetPort} `;
+                    instanceText.textContent = `Port ${targetPort}`;
+                    currentDisplayTitle = `Port ${targetPort}`;
+                    if (mainTitle) mainTitle.textContent = currentDisplayTitle;
                     lastHash = ''; // Force render next frame
 
                     // Show loading state
@@ -792,4 +808,14 @@ if (imageInput) {
 }
 
 // Start
+if (mainTitle) {
+    mainTitle.textContent = currentDisplayTitle;
+    // Nuclear Option: Keep it from changing
+    const observer = new MutationObserver(() => {
+        if (mainTitle.textContent !== currentDisplayTitle) {
+            mainTitle.textContent = currentDisplayTitle;
+        }
+    });
+    observer.observe(mainTitle, { childList: true, characterData: true, subtree: true });
+}
 connectWebSocket();

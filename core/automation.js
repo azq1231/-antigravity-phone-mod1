@@ -548,7 +548,13 @@ if (btn && btn.offsetParent !== null) {
 export async function getAppState(cdpList) {
     const EXP = `(async () => {
     try {
-        const state = { mode: 'Unknown', model: 'Unknown', usage: '' };
+        const state = { mode: 'Unknown', model: 'Unknown', usage: '', title: '' };
+        
+        // 抓取工作區名稱 (e.g., "yian-v1 - Antigravity" -> "yian-v1")
+        let docTitle = document.title || "";
+        let rawTitle = docTitle.split(' - ')[0].trim();
+        state.title = rawTitle.length > 18 ? rawTitle.substring(0, 15) + '...' : rawTitle;
+
         const allEls = Array.from(document.querySelectorAll('*'));
         for (const el of allEls) {
             if (el.innerText === 'Fast' || el.innerText === 'Planning') { state.mode = el.innerText; break; }

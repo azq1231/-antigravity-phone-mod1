@@ -3,5 +3,5 @@ credentials-file: C:\Users\kuo_1\.cloudflared\190d4402-d9d1-4f93-8f1e-ab1050ec97
 
 ingress:
   - hostname: ag.monyangood.com
-    service: http://localhost:3004
+    service: http://127.0.0.1:3004
   - service: http_status:404
