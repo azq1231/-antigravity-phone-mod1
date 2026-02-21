@@ -344,40 +344,29 @@ function scrollToBottom() {
 }
 
 // Messaging Logic (V3 Robust Retry)
+// --- Messaging Logic (V4.2 Optimized) ---
 async function sendMessage(retryCount = 0) {
-    console.log('[DEBUG] sendMessage called, retryCount:', retryCount, 'isSending:', isSending, 'pendingImage:', pendingImage ? 'exists' : 'null');
-
-    if (isSending && retryCount === 0) {
-        console.log('[DEBUG] Blocked: isSending is true');
-        return;
-    }
     const msg = messageInput.value.trim();
-    console.log('[DEBUG] msg:', msg, 'pendingImage:', pendingImage ? 'exists' : 'null');
+    if (!msg && !pendingImage) return;
 
-    if (!msg && !pendingImage) {
-        console.log('[DEBUG] Blocked: no msg and no pendingImage');
-        return;
-    }
+    // Block concurrent sends
+    if (isSending && retryCount === 0) return;
 
     if (retryCount === 0) {
         isSending = true;
         sendBtn.disabled = true;
         sendBtn.innerHTML = '<div class="loading-spinner"></div>';
-        // Generate Idempotency Key
-        window.currentMsgId = Date.now().toString(36) + Math.random().toString(36).substr(2);
+        // NEW: Generate stable msgId for this specific message attempt
+        window.currentMsgId = 'm_' + Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+        console.log('[App] Starting new send task:', window.currentMsgId);
     } else {
-        sendBtn.innerHTML = `<span style="font-size:10px">Retry ${retryCount}/25</span>`;
-        statusText.textContent = `⏳ Busy... (${retryCount}/25)`;
+        const dots = '.'.repeat((retryCount % 3) + 1);
+        statusText.textContent = `⏳ Retrying${dots} (${retryCount}/5)`;
     }
 
     try {
-        if (pendingImage) statusText.textContent = '📤 Uploading Image...';
-        else statusText.textContent = '🚀 Sending Message...';
-
         const payload = { message: msg, msgId: window.currentMsgId };
         if (pendingImage) payload.image = pendingImage;
-
-        console.log('[DEBUG] Sending payload with image:', pendingImage ? 'yes' : 'no');
 
         const res = await fetchWithAuth(`/send?port=${currentViewingPort}&_t=${Date.now()}`, {
             method: 'POST',
@@ -385,33 +374,37 @@ async function sendMessage(retryCount = 0) {
             body: JSON.stringify(payload)
         });
 
-        if (!res.ok) {
-            const errData = await res.json().catch(() => ({}));
-            throw new Error(errData.error || `Server returned ${res.status}`);
-        }
+        const data = await res.json().catch(() => ({ error: 'Invalid JSON' }));
 
-        const data = await res.json();
+        // Handle Success or Deduped Case
+        if (data.ok || data.ignored) {
+            console.log('[App] Send Success:', data.method || 'ignored');
 
-        if (data.ok) {
+            // Clear inputs ONLY on success
             messageInput.value = '';
-            pendingImage = null; // Clear image
+            pendingImage = null;
             if (attachBtn) attachBtn.classList.remove('active');
 
             statusText.textContent = `Live (${cachedVLabel})`;
-            sendBtn.innerHTML = 'Send';
-            sendBtn.disabled = false;
             isSending = false;
+            sendBtn.disabled = false;
+            sendBtn.innerHTML = 'Send';
             forceScrollToBottom = true;
-            setTimeout(() => fetchAppState(), 500);
             return;
         }
-        throw new Error(data.error || 'Server processing failed');
-    } catch (e) {
-        console.warn('[App] Send failed:', e);
-        statusText.textContent = `❌ ${e.message}`;
-        if (!e.message.includes('Timeout')) {
-            console.error('Send failed details:', e);
+
+        // Handle "Busy" with automatic retry
+        if (data.reason === 'busy' && retryCount < 5) {
+            console.log('[App] Server busy, retrying in 2s...');
+            setTimeout(() => sendMessage(retryCount + 1), 2000);
+            return;
         }
+
+        throw new Error(data.error || data.reason || 'Send failed');
+
+    } catch (e) {
+        console.error('[App] Final Send Error:', e);
+        statusText.textContent = `❌ ${e.message}`;
         resetSendState();
     }
 }

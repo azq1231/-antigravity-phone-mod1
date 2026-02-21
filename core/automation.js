@@ -3,6 +3,7 @@ import { simpleHash } from './utils.js';
 export async function captureSnapshot(cdpList) {
     const CAPTURE_SCRIPT = `(() => {
         try {
+            const startTime = Date.now();
             const body = document.body;
             if (!body) return { error: 'No body' };
             
@@ -187,6 +188,7 @@ return {
     scrollInfo: scrollInfo,
     foundTarget: !!target,
     matchQuality: matchQuality,
+    duration: Date.now() - startTime,
     title: document.title,
     url: window.location.href
 };
@@ -224,7 +226,8 @@ return {
                         targetTitle: cdp.title,
                         foundTarget: val.foundTarget,
                         matchQuality: val.matchQuality || 'fallback',
-                        url: val.url
+                        url: val.url,
+                        duration: val.duration // Add duration from the script's result
                     });
                 }
             } catch (e) {
@@ -313,31 +316,57 @@ const editors = [...document.querySelectorAll('[data-lexical-editor="true"][cont
 const editor = editors.at(-1);
 if (!editor) return { ok: false, error: "editor_not_found" };
 
+// 1. Idempotency Check & Clear
+const injectId = "inj_" + Date.now();
+if (editor.getAttribute('data-last-inject') === ${safeText} && Date.now() - parseInt(editor.getAttribute('data-last-inject-time') || '0') < 1000) {
+    return { ok: true, method: "idempotent_skip" };
+}
+editor.setAttribute('data-last-inject', ${safeText});
+editor.setAttribute('data-last-inject-time', Date.now().toString());
+
 editor.focus();
-document.execCommand?.("selectAll", false, null);
-document.execCommand?.("delete", false, null);
-try { document.execCommand?.("insertText", false, ${safeText}); } catch {
+// Most robust clear for Lexical
+try {
+    const sel = window.getSelection();
+    sel.selectAllChildren(editor);
+    document.execCommand("delete", false, null);
+} catch (e) {}
+
+if (editor.textContent.length > 0) {
+    editor.innerHTML = '<p dir="ltr"><br></p>'; // Force Lexical empty state
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true }));
+}
+
+// 2. Insert Content
+try { 
+    document.execCommand("insertText", false, ${safeText}); 
+} catch (e) {
     editor.textContent = ${safeText};
     editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: ${safeText} }));
-        }
+}
 
-await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+// Optimization: Brief wait for Lexical to sync DOM
+await new Promise(r => setTimeout(r, 60));
 
-const allButtons = Array.from(document.querySelectorAll('button, [role="button"], a.button'));
+// 3. Find and Trigger Send
+const allButtons = Array.from(document.querySelectorAll('button, [role="button"], a.button, [title*="Send"], [aria-label*="Send"]'));
 const isActuallySend = (b) => {
-    const label = (b.innerText + ' ' + (b.getAttribute('aria-label') || '') + ' ' + (b.title || '')).toLowerCase();
-    if (label.includes('continue') || label.includes('繼續') || label.includes('stop') || label.includes('停止')) return false;
-    return label.includes('send') || label.includes('submit') || label.includes('發送') || b.querySelector('svg.lucide-arrow-right, .lucide-send');
+    const label = (b.innerText + ' ' + (b.getAttribute('aria-label') || '') + ' ' + (b.title || '') + ' ' + (b.className || '')).toLowerCase();
+    if (label.includes('continue') || label.includes('繼續') || label.includes('stop') || label.includes('停止') || label.includes('cancel')) return false;
+    return label.includes('send') || label.includes('submit') || label.includes('發送') || label.includes('送出') || 
+           b.querySelector('svg.lucide-arrow-right, .lucide-send, svg[class*="send"]');
 };
 
 const submit = allButtons.find(isActuallySend);
 
 if (submit && submit.offsetParent !== null) {
-    setTimeout(() => submit.click(), 50);
-    return { ok: true, method: "click_verified_send" };
+    submit.click();
+    // Optimistic return
+    return { ok: true, method: "click_send" };
 } else {
+    // Enter key fallback
     editor.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter", code: "Enter", keyCode: 13, which: 13 }));
-    return { ok: true, method: "enter_safe_fallback" };
+    return { ok: true, method: "enter_fallback" };
 }
     }) ()`;
 

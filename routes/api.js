@@ -15,7 +15,7 @@ const PORTS = [9000, 9001, 9002, 9003];
 const pkg = JSON.parse(fs.readFileSync(join(__dirname, '..', 'package.json'), 'utf8'));
 const APP_VERSION = pkg.version;
 
-const DEDUP_WINDOW = 30000;
+const DEDUP_WINDOW = 60000;
 const processedMsgIds = new Map();
 
 router.post('/send', async (req, res) => {
@@ -44,7 +44,12 @@ router.post('/send', async (req, res) => {
             console.log('[API] Text injection result:', JSON.stringify(result));
         }
 
-        if (!result.ok && msgId) processedMsgIds.delete(msgId);
+        if (!result.ok && msgId) {
+            // Only delete if it's a structural error, not a potential successful "timeout" or "busy"
+            if (result.error === 'no_editor_found' || result.error === 'no_editor_in_context') {
+                processedMsgIds.delete(msgId);
+            }
+        }
         res.json(result);
     } catch (e) {
         console.error('[API] Error in /send:', e);
