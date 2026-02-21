@@ -515,7 +515,8 @@ document.querySelector('.setting-chip:nth-child(2)').onclick = async () => { // 
 };
 
 
-document.querySelector('.setting-chip:nth-child(3)').onclick = async () => { // Instance
+// Slot Manager Logic (Moved to Main Title)
+const openSlotManager = async () => {
     const res = await fetchWithAuth('/slots');
     const data = await res.json();
 
@@ -528,7 +529,7 @@ document.querySelector('.setting-chip:nth-child(3)').onclick = async () => { // 
     header.textContent = 'Slot Manager / 工作槽位管理';
     panel.appendChild(header);
 
-    // Render Slots
+    // ... (rest of the slot rendering logic)
     data.slots.forEach(slot => {
         const item = document.createElement('div');
         item.className = 'slot-item';
@@ -605,7 +606,7 @@ document.querySelector('.setting-chip:nth-child(3)').onclick = async () => { // 
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ port: slot.port })
                 });
-                setTimeout(() => document.querySelector('.setting-chip:nth-child(3)').click(), 1000);
+                setTimeout(() => openSlotManager(), 1000);
             };
             controls.appendChild(stopBtn);
         } else {
@@ -619,7 +620,7 @@ document.querySelector('.setting-chip:nth-child(3)').onclick = async () => { // 
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ port: slot.port })
                 });
-                setTimeout(() => document.querySelector('.setting-chip:nth-child(3)').click(), 3000); // Give it time
+                setTimeout(() => openSlotManager(), 3000); // Give it time
             };
             controls.appendChild(startBtn);
         }
@@ -636,12 +637,19 @@ document.querySelector('.setting-chip:nth-child(3)').onclick = async () => { // 
         if (!confirm('Are you sure you want to stop ALL instances?')) return;
         panicBtn.textContent = 'Killing...';
         await fetchWithAuth('/kill-all', { method: 'POST' });
-        setTimeout(() => document.querySelector('.setting-chip:nth-child(3)').click(), 2000);
+        setTimeout(() => openSlotManager(), 2000);
     };
     panel.appendChild(panicBtn);
 
     document.getElementById('modalOverlay').style.display = 'flex';
 };
+
+// Bind to Main Title
+if (mainTitle) mainTitle.onclick = openSlotManager;
+
+// Remove old binding from hidden chip (keeping logic accessible via openSlotManager)
+// document.querySelector('.setting-chip:nth-child(3)').onclick = ... 
+
 
 // --- Event Listeners ---
 console.log('[DEBUG] sendBtn element:', sendBtn);

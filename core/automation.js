@@ -565,18 +565,29 @@ export async function getAppState(cdpList) {
         const usageNode = textNodes.find(el => (el.innerText.includes('|') || el.innerText.includes('%')) && (el.closest('[class*="statusbar"]') || el.closest('[class*="status-bar"]')));
         if (usageNode) state.usage = usageNode.innerText.trim();
 
-        // 2. 抓取潛在型號標籤 (過濾掉用量)
+        // 2. 抓取潛在型號標籤 (過濾掉用量與雜訊)
         const candidates = textNodes.filter(el => {
-            const t = el.innerText;
+            const t = el.innerText.trim();
+            // 基本型號關鍵字
             const hasModel = ["Gemini", "Claude", "GPT", "Grok", "o1", "Sonnet", "Opus"].some(k => t.includes(k));
             if (!hasModel) return false;
+            
+            // 過濾用量資訊
             if (t.includes('|') || t.includes('%')) return false;
+            
+            // --- 強化過濾器：過濾掉看起來像標題或對話內容的長句子 ---
+            // 正常型號名稱通常不會超過 35 個字
+            if (t.length > 35) return false;
+            // 過濾掉包含常見「非型號」動詞或雜訊詞的文本
+            const noiseWords = ["Clarifying", "version", "chat", "history", "message", "how to", "what is", "about"];
+            if (noiseWords.some(w => t.toLowerCase().includes(w))) return false;
+            
             return true;
         });
 
-        const bestMatch = candidates.find(el => el.closest('button')) ||
+        const bestMatch = candidates.find(el => el.closest('button') && (el.innerText.includes('Gemini') || el.innerText.includes('Claude') || el.innerText.includes('GPT'))) ||
+            candidates.find(el => el.closest('button')) ||
             candidates.find(el => el.className.includes('opacity-70') || el.className.includes('ellipsis')) ||
-            candidates.find(el => !el.closest('[class*="statusbar"]')) ||
             candidates[0];
 
         if (bestMatch) state.model = bestMatch.innerText.trim();
