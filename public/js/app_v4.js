@@ -32,6 +32,7 @@ const refreshBtn = document.getElementById('refreshBtn');
 const instanceText = document.getElementById('instanceText');
 const modeText = document.getElementById('modeText');
 const modelText = document.getElementById('modelText');
+const activeModelText = document.getElementById('activeModelText');
 const imageInput = document.getElementById('imageInput');
 const attachBtn = document.getElementById('attachBtn');
 const newChatBtn = document.getElementById('newChatBtn');
@@ -68,7 +69,12 @@ async function fetchAppState() {
         const res = await fetchWithAuth(`/app-state?port=${currentViewingPort}&_t=${Date.now()}`);
         const data = await res.json();
         if (data.mode && data.mode !== 'Unknown') modeText.textContent = data.mode;
-        if (data.model && data.model !== 'Unknown') modelText.textContent = data.model;
+        if (data.model && data.model !== 'Unknown') {
+            // 按鈕顯示用量 (若有的話)，否則顯示乾淨型號
+            modelText.textContent = data.usage || data.model;
+            // 藍色標籤始終顯示最乾淨的型號名稱
+            if (activeModelText) activeModelText.textContent = data.model;
+        }
         instanceText.textContent = `Port ${currentViewingPort}`;
 
         // Dynamic Version Injection (Single Source of Truth)
@@ -309,16 +315,23 @@ function renderSnapshot(data) {
         document.head.appendChild(style);
     }
 
-    // Add CSS from snapshot
-    let dynamicStyle = document.getElementById('snapshot-styles');
-    if (!dynamicStyle) {
-        dynamicStyle = document.createElement('style');
-        dynamicStyle.id = 'snapshot-styles';
-        document.head.appendChild(dynamicStyle);
+    // Add CSS from snapshot (Optimized V4.2 Differential)
+    if (data.css && data.cssType !== 'cached') {
+        let dynamicStyle = document.getElementById('snapshot-styles');
+        if (!dynamicStyle) {
+            dynamicStyle = document.createElement('style');
+            dynamicStyle.id = 'snapshot-styles';
+            document.head.appendChild(dynamicStyle);
+        }
+        if (dynamicStyle.textContent !== data.css) {
+            dynamicStyle.textContent = data.css;
+        }
     }
-    dynamicStyle.textContent = data.css || '';
 
-    chatContent.innerHTML = data.html;
+    // Incremental DOM Update (Simple but effective to prevent total reflow if hash matches)
+    if (chatContent.innerHTML !== data.html) {
+        chatContent.innerHTML = data.html;
+    }
 
     if (forceScrollToBottom || isNearBottom) {
         scrollToBottom();

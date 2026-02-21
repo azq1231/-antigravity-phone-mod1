@@ -23,12 +23,21 @@ export async function captureSnapshot(cdpList) {
             // If we found a target, use it. Otherwise, use body but indicate it's a fallback
             const root = target || body;
             
-            // 2. Capture CSS
+            // 2. Capture CSS (Optimized V4.2)
             const rules = [];
+            const skipPrefixes = ['.monaco-', '.codicon-', '.mtk', '.monaco-editor', '.margin-view-overlays', '.decorations-overview-ruler', '.minimap'];
             try {
                 for (const sheet of document.styleSheets) {
                     try {
+                        // Skip entire sheets if they are obviously IDE-internal (e.g. Monaco/Codicon)
+                        if (sheet.href && (sheet.href.includes('monaco') || sheet.href.includes('codicon'))) continue;
+                        
                         for (const rule of sheet.cssRules) {
+                            // Skip huge blocks of IDE rules
+                            const selector = rule.selectorText || '';
+                            if (skipPrefixes.some(p => selector.includes(p))) continue;
+                            if (rule.cssText.includes('@font-face')) continue; // Font face rules are huge and unused
+                            
                             rules.push(rule.cssText);
                         }
                     } catch (e) { }
@@ -89,6 +98,17 @@ export async function captureSnapshot(cdpList) {
             // B. Text-based cleanup for banners and status bars
             clone.querySelectorAll('*').forEach(el => {
                 try {
+                    // 1. Clean attributes (Huge size saver)
+                    const attrsToRemove = [];
+                    for (let i = 0; i < el.attributes.length; i++) {
+                        const attr = el.attributes[i];
+                        if (attr.name.startsWith('data-') && !attr.name.includes('scroll')) {
+                             attrsToRemove.push(attr.name);
+                        }
+                    }
+                    attrsToRemove.forEach(a => el.removeAttribute(a));
+
+                    // 3. Text based noise cleanup
                     const text = (el.innerText || '').toLowerCase();
                     if (text.includes('review changes') || text.includes('files with changes') || 
                         text.includes('context found') || text.includes('ask anything')) {

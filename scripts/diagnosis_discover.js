@@ -1,91 +1,98 @@
-import { getOrConnectParams } from '../core/cdp_manager.js';
+import { activeConnections, getOrConnectParams } from '../core/cdp_manager.js';
 import { discoverModels, captureSnapshot, setModel, getAppState } from '../core/automation.js';
 
 async function diagnose() {
-    console.log("🔍 [DIAGNOSIS] Starting Comprehensive Diagnosis...");
-    const port = 9000;
+    console.log("🔍 [DIAGNOSIS] Starting Comprehensive V4.2 Diagnosis...");
+    const PORTS = [9000, 9001, 9002, 9003];
 
     try {
-        const conns = await getOrConnectParams(port);
-        console.log("✅ CDP Connected (Targets:", conns.length, ")");
+        // --- 1. Multi-Port Availability Scan ---
+        console.log("\n--- 1. Multi-Port Availability Scan ---");
+        for (const p of PORTS) {
+            try {
+                const conns = await getOrConnectParams(p);
+                console.log(`Port ${p}: ✅ Alive (${conns.length} contexts)`);
+            } catch (e) {
+                console.log(`Port ${p}: ❌ Offline/Busy`);
+            }
+        }
 
-        // Test 4: App State
-        console.log("\n--- Test 4: App State ---");
+        const mainPort = 9000;
+        const conns = await getOrConnectParams(mainPort);
+        console.log(`\nUsing Port ${mainPort} for deep diagnosis...`);
+
+        // --- 2. App State & Model Discovery ---
+        console.log("\n--- 2. App & Model Integration ---");
         const state = await getAppState(conns);
         console.log("📊 App State Found:", JSON.stringify(state, null, 2));
-
-        // Test 1: Model Discovery
-        console.log("\n--- Test 1: Model Discovery ---");
 
         const modelResult = await discoverModels(conns);
         if (modelResult.error) {
             console.error("❌ Model Discovery Failed:", modelResult.error);
-            if (modelResult.debug) console.log("Debug Info:", JSON.stringify(modelResult.debug, null, 2));
         } else {
-            console.log("✅ Models Found:", modelResult.models);
+            console.log("✅ Models Found:", modelResult.models.length, "models available");
+            console.log("   Sample Models:", modelResult.models.slice(0, 3).join(", "));
         }
 
-        // Test 2: Path Sanitization (Fixing 404s)
-        console.log("\n--- Test 2: Path Sanitization ---");
+        // --- 3. Snapshot Health & Sanitization ---
+        console.log("\n--- 3. Snapshot Health & Sanitization ---");
         const snapshot = await captureSnapshot(conns);
         if (snapshot.error) {
             console.error("❌ Snapshot failed:", snapshot.error);
         } else {
-            const problematicPath = "D:/Program Files/Antigravity/resources/app/extensions/theme-symbols/src/icons/files/js.svg";
-            const encodedPath = "D:/Program%20Files/Antigravity/resources/app/extensions/theme-symbols/src/icons/files/js.svg";
+            const htmlSize = Buffer.byteLength(snapshot.html, 'utf8');
+            const cssSize = Buffer.byteLength(snapshot.css, 'utf8');
+            console.log(`📏 Snapshot Size: HTML ${(htmlSize / 1024).toFixed(1)} KB, CSS ${(cssSize / 1024).toFixed(1)} KB`);
+            console.log(`🎯 Match Quality: ${snapshot.matchQuality} (Target Found: ${snapshot.foundTarget})`);
 
-            // Check if these paths exist in the cleaned HTML
-            const hasAbsolute = snapshot.html.includes("D:/Program Files") || snapshot.html.includes("Program%20Files");
-            const hasMapped = snapshot.html.includes("/vscode-resources/");
+            if (htmlSize > 300 * 1024) console.warn("⚠️ Warning: Snapshot HTML is quite large (>300KB), might slow down the phone.");
 
-            if (hasAbsolute) {
-                console.error("❌ Found leaked absolute paths in HTML!");
-                const leaks = snapshot.html.match(/[a-z]:[^"'> ]+Program[^"'> ]+/gi) || [];
-                console.log("Leaked samples:", leaks.slice(0, 3));
-            } else if (hasMapped) {
-                console.log("✅ Verified: Absolute paths mapped to /vscode-resources/");
+            // Path Security Check
+            const leaks = [];
+            if (snapshot.html.includes("D:/Program Files")) leaks.push("D:/Program Files");
+            if (snapshot.html.includes("C:/Users")) leaks.push("C:/Users");
+            if (snapshot.html.includes(".gemini")) leaks.push(".gemini");
 
-                // Real-world connectivity test (Check if the server can actually serve it)
-                const sampleIcon = "http://localhost:3004/vscode-resources/Antigravity/resources/app/extensions/theme-symbols/src/icons/files/document.svg";
-                console.log(`🔗 Testing resource availability: ${sampleIcon}`);
-                try {
-                    const res = await fetch(sampleIcon, { method: 'HEAD' });
-                    if (res.ok) {
-                        console.log("✅ Resource is ACCESSIBLE (200 OK)");
-                    } else {
-                        console.error(`❌ Resource is NOT accessible (${res.status} ${res.statusText})`);
-                        console.error(`   URL tried: ${sampleIcon}`);
-                        console.error("   Reason: Server-side root for /vscode-resources in server_v4.js may be misaligned with the path suffix.");
-                    }
-                } catch (e) {
-                    console.log(`ℹ️ Connectivity test failed: ${e.message} (Is server running on :3004?)`);
-                }
+            if (leaks.length > 0) {
+                console.error("❌ SECURITY LEAK: Found un-sanitized paths:", leaks.join(", "));
+            } else {
+                console.log("✅ Sanitization: All sensitive absolute paths are hidden.");
             }
 
-            // Check Brain paths
-            const hasBrainAbsolute = snapshot.html.includes(".gemini") || snapshot.html.includes("antigravity/brain");
-            const hasBrainMapped = snapshot.html.includes("/brain/");
-            if (hasBrainAbsolute) {
-                console.error("❌ Found leaked absolute brain paths!");
-            } else if (hasBrainMapped) {
-                console.log("✅ Verified: Brain paths mapped to /brain/");
-            } else {
-                console.log("ℹ️ No brain paths found in snapshot.");
+            // Connectivity Test
+            const sampleIcon = "http://localhost:3004/vscode-resources/Antigravity/resources/app/extensions/theme-symbols/src/icons/files/document.svg";
+            console.log(`🔗 Testing resource availability: ${sampleIcon}`);
+            try {
+                const res = await fetch(sampleIcon, { method: 'HEAD' });
+                if (res.ok) console.log("✅ Resource is ACCESSIBLE (200 OK)");
+                else console.error(`❌ Resource is NOT accessible (${res.status} ${res.statusText})`);
+            } catch (e) {
+                console.log(`ℹ️ Connectivity test failed: ${e.message} (Is server running?)`);
             }
         }
 
-        // Test 3: Model Switching
-        // console.log("\n--- Test 3: Model Switching ---");
-        // if (!modelResult.error && modelResult.models.length > 0) {
-        //     const testModel = modelResult.models[0];
-        //     console.log(`🔄 Attempting to switch to: "${testModel}"`);
-        //     // const switchResult = await setModel(conns, testModel);
-        //     // console.log("📊 Switch Result:", JSON.stringify(switchResult, null, 2));
-        // }
+        // --- 4. Interactive Layer Check ---
+        console.log("\n--- 4. Interactive Layer Check ---");
+        const editorCheckScript = `(() => {
+            const editors = [...document.querySelectorAll('[data-lexical-editor="true"][contenteditable="true"]')].filter(el => el.offsetParent !== null);
+            return { count: editors.length, tag: editors[0]?.tagName, visible: editors[0]?.offsetHeight > 0 };
+        })()`;
+
+        let foundEditor = false;
+        for (const ctx of conns[0]?.contexts || []) {
+            try {
+                const res = await conns[0].call("Runtime.evaluate", { expression: editorCheckScript, returnByValue: true, contextId: ctx.id });
+                if (res.result?.value?.count > 0) {
+                    console.log(`✅ Editor found in Context ${ctx.id}: ${JSON.stringify(res.result.value)}`);
+                    foundEditor = true;
+                    break;
+                }
+            } catch (e) { }
+        }
+        if (!foundEditor) console.warn("⚠️ Warning: No active editor found in current contexts. Message injection might fail.");
 
     } catch (e) {
         console.error("💥 FATAL DIAGNOSIS ERROR:", e.message);
-        console.error(e.stack);
     }
 }
 

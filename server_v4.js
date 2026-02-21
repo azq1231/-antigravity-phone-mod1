@@ -27,7 +27,14 @@ process.on('unhandledRejection', (reason) => console.error('💥 [V4] Unhandled 
 async function createServer() {
     const app = express();
     const server = http.createServer(app);
-    const wss = new WebSocketServer({ server });
+    const wss = new WebSocketServer({
+        server,
+        perMessageDeflate: {
+            zlibDeflateOptions: { chunkLength: 1024, memLevel: 7, level: 3 },
+            zlibInflateOptions: { chunkLength: 10 * 1024 },
+            threshold: 1024 // Only compress if payload > 1KB
+        }
+    });
 
     app.use((req, res, next) => {
         // 忽略靜態資源的日誌，減少終端機噪音
@@ -144,16 +151,27 @@ async function createServer() {
                 }
 
                 if (effectiveSnapshot && !effectiveSnapshot.error && (ws.lastHash !== effectiveSnapshot.hash || forceUpdate)) {
-                    if (ws.lastHash !== effectiveSnapshot.hash) {
-                        // console.log(`[V4-LOOP] SUCCESS: Sending snapshot (${effectiveSnapshot.hash}) from Port ${ws.viewingPort}`);
-                    }
-                    ws.send(JSON.stringify({
+                    const cssHash = effectiveSnapshot.css ? effectiveSnapshot.css.length : 0; // Simple length as proxy or full hash
+                    const cssChanged = ws.lastCssHash !== cssHash;
+
+                    const message = {
                         type: 'snapshot_update',
                         port: ws.viewingPort,
                         isAutoSwitched: false,
                         debug_source: effectiveSnapshot.targetTitle || 'unknown',
                         ...effectiveSnapshot
-                    }));
+                    };
+
+                    // Optimization: Only send CSS if it changed
+                    if (!cssChanged && !forceUpdate) {
+                        delete message.css;
+                        message.cssType = 'cached';
+                    } else {
+                        ws.lastCssHash = cssHash;
+                        message.cssType = 'full';
+                    }
+
+                    ws.send(JSON.stringify(message));
                     ws.lastHash = effectiveSnapshot.hash;
                 } else if (effectiveSnapshot?.error && forceUpdate) {
                     // console.warn(`[V4-LOOP] SYNC ERROR for ${ws.remoteAddress}: ${effectiveSnapshot.error}`);
