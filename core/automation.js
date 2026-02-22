@@ -973,56 +973,78 @@ export async function startNewChat(cdpList) {
 export async function getChatHistory(cdpList) {
     const EXP = `(async () => {
     try {
-        const skipWords = ['new chat', 'settings', 'home', 'account', 'upgrade', 'help', 'log in', 'sign up', 'clear all'];
-        const historyList = document.querySelector('[class*="history-list"], [class*="ConversationList"]');
-        
-        if (!historyList) {
-            const sidebar = document.querySelector('nav, [class*="sidebar"]');
-            if (!sidebar) return { error: 'History container not found' };
+        // 核心特徵：真正的歷史紀錄通常會有這些時間或標題標記
+        const historyHeadings = ['today', 'yesterday', 'previous', 'days ago', 'chat history'];
+        const skipItems = ['new chat', 'settings', 'help', 'account', 'clear', 'all chats'];
 
-            const possibleItems = Array.from(sidebar.querySelectorAll('a, button, [role="link"]'))
+        // 偵測是否為主框架 (Workbench) - 如果有 VS Code 的選單項目，則排除這整個 Context
+        const isWorkbench = Array.from(document.querySelectorAll('div')).some(el => {
+            const t = el.innerText.trim();
+            return t === '檔案(F)' || t === '編輯(E)' || t === '選取項目(S)' || t === 'View' || t === 'Selection';
+        });
+        if (isWorkbench) return { error: 'Skip Workbench' };
+
+        // 優先找尋專門的容器
+        const historyList = document.querySelector('[class*="history-list"], [class*="ConversationList"], [class*="sidebar-list"]');
+        
+        const scan = (root) => {
+            const possibleItems = Array.from(root.querySelectorAll('[class*="item"], a, button, [role="link"]'))
                 .filter(el => {
                     const text = el.innerText.trim().toLowerCase();
                     return el.offsetParent !== null && 
-                           text.length > 8 && 
-                           text.length < 100 && 
-                           !skipWords.some(w => text.includes(w)) &&
-                           !el.closest('[aria-hidden="true"]');
+                           text.length > 5 && 
+                           text.length < 150 &&
+                           !skipItems.some(s => text.includes(s));
                 });
+            return possibleItems.map((el, i) => ({
+                id: i,
+                title: el.innerText.trim().substring(0, 100).replace(/\\n/g, ' '),
+                active: el.classList.contains('active') || !!el.querySelector('[class*="active"]')
+            }));
+        };
 
-            if (possibleItems.length > 0) {
-                return { success: true, items: possibleItems.map((el, i) => ({ id: i, title: el.innerText.trim(), active: false })) };
-            }
-            return { error: 'No history items found in sidebar' };
+        if (historyList) {
+            const items = scan(historyList);
+            if (items.length > 0) return { success: true, items };
         }
 
-        const items = Array.from(historyList.querySelectorAll('[class*="history-item"], [class*="ConversationListItem"]'))
-            .filter(el => el.offsetParent !== null)
-            .map((el, idx) => {
-                const titleEl = el.querySelector('[class*="title"], [class*="text-ellipsis"]');
-                return {
-                    id: idx,
-                    title: (titleEl ? titleEl.innerText : el.innerText).trim().substring(0, 100),
-                    active: el.classList.contains('active') || !!el.querySelector('[class*="active"]')
-                };
-            })
-            .filter(item => !skipWords.some(w => item.title.toLowerCase().includes(w)));
+        // Fallback: 掃描 nav 或 sidebar
+        const sidebar = document.querySelector('nav, [class*="sidebar"]');
+        if (sidebar) {
+            const items = scan(sidebar);
+            if (items.length > 0) return { success: true, items };
+        }
 
-        return { success: true, items };
+        return { error: 'Not found here' };
     } catch (err) {
         return { error: err.toString() };
     }
 })()`;
 
+    const candidates = [];
     for (const cdp of cdpList) {
         for (const ctx of cdp.contexts) {
             try {
-                const res = await cdp.call("Runtime.evaluate", { expression: EXP, returnByValue: true, awaitPromise: true, contextId: ctx.id });
-                if (res.result?.value?.success) return res.result.value;
+                const res = await cdp.call('Runtime.evaluate', {
+                    expression: EXP,
+                    contextId: ctx.id,
+                    returnByValue: true,
+                    awaitPromise: true
+                });
+                const result = res && res.result ? res.result.value : null;
+                if (result && result.success && result.items.length > 0) {
+                    candidates.push(result);
+                }
             } catch (e) { }
         }
     }
-    return { error: 'Failed' };
+
+    // 優先返回有最多項目的結果（通常就是真正的歷史紀錄列表）
+    if (candidates.length > 0) {
+        return candidates.sort((a, b) => b.items.length - a.items.length)[0];
+    }
+
+    return { error: 'No chat history found across any targets' };
 }
 
 export async function selectChat(cdpList, index) {
