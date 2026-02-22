@@ -971,80 +971,8 @@ export async function startNewChat(cdpList) {
 }
 
 export async function getChatHistory(cdpList) {
-    const EXP = `(async () => {
-    try {
-        // 核心特徵：真正的歷史紀錄通常會有這些時間或標題標記
-        const historyHeadings = ['today', 'yesterday', 'previous', 'days ago', 'chat history'];
-        const skipItems = ['new chat', 'settings', 'help', 'account', 'clear', 'all chats'];
-
-        // 偵測是否為主框架 (Workbench) - 如果有 VS Code 的選單項目，則排除這整個 Context
-        const isWorkbench = Array.from(document.querySelectorAll('div')).some(el => {
-            const t = el.innerText.trim();
-            return t === '檔案(F)' || t === '編輯(E)' || t === '選取項目(S)' || t === 'View' || t === 'Selection';
-        });
-        if (isWorkbench) return { error: 'Skip Workbench' };
-
-        // 優先找尋專門的容器
-        const historyList = document.querySelector('[class*="history-list"], [class*="ConversationList"], [class*="sidebar-list"]');
-        
-        const scan = (root) => {
-            const possibleItems = Array.from(root.querySelectorAll('[class*="item"], a, button, [role="link"]'))
-                .filter(el => {
-                    const text = el.innerText.trim().toLowerCase();
-                    return el.offsetParent !== null && 
-                           text.length > 5 && 
-                           text.length < 150 &&
-                           !skipItems.some(s => text.includes(s));
-                });
-            return possibleItems.map((el, i) => ({
-                id: i,
-                title: el.innerText.trim().substring(0, 100).replace(/\\n/g, ' '),
-                active: el.classList.contains('active') || !!el.querySelector('[class*="active"]')
-            }));
-        };
-
-        if (historyList) {
-            const items = scan(historyList);
-            if (items.length > 0) return { success: true, items };
-        }
-
-        // Fallback: 掃描 nav 或 sidebar
-        const sidebar = document.querySelector('nav, [class*="sidebar"]');
-        if (sidebar) {
-            const items = scan(sidebar);
-            if (items.length > 0) return { success: true, items };
-        }
-
-        return { error: 'Not found here' };
-    } catch (err) {
-        return { error: err.toString() };
-    }
-})()`;
-
-    const candidates = [];
-    for (const cdp of cdpList) {
-        for (const ctx of cdp.contexts) {
-            try {
-                const res = await cdp.call('Runtime.evaluate', {
-                    expression: EXP,
-                    contextId: ctx.id,
-                    returnByValue: true,
-                    awaitPromise: true
-                });
-                const result = res && res.result ? res.result.value : null;
-                if (result && result.success && result.items.length > 0) {
-                    candidates.push(result);
-                }
-            } catch (e) { }
-        }
-    }
-
-    // 優先返回有最多項目的結果（通常就是真正的歷史紀錄列表）
-    if (candidates.length > 0) {
-        return candidates.sort((a, b) => b.items.length - a.items.length)[0];
-    }
-
-    return { error: 'No chat history found across any targets' };
+    // 暫時停用此功能，因為 VS Code 跨域 Webview 隔離導致無法穩定點擊
+    return { success: false, error: 'History feature is temporarily disabled for stability.' };
 }
 
 export async function selectChat(cdpList, index) {
