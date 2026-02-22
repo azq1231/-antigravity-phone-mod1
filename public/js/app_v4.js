@@ -52,10 +52,8 @@ let userScrollLockUntil = 0;
 let pingTimeout = null;
 let pendingImage = null;
 let currentDisplayTitle = `Port ${currentViewingPort}`;
-
-console.log('[DEBUG] imageInput element:', imageInput);
-console.log('[DEBUG] attachBtn element:', attachBtn);
-console.log('[DEBUG] sendBtn element:', sendBtn);
+let cachedVLabel = 'V4.1';
+let uiLock = false; // 全域互動鎖，防止多重視窗衝突
 
 // Auth Helper
 async function fetchWithAuth(url, options = {}) {
@@ -72,9 +70,7 @@ async function fetchAppState() {
         const data = await res.json();
         if (data.mode && data.mode !== 'Unknown') modeText.textContent = data.mode;
         if (data.model && data.model !== 'Unknown') {
-            // 按鈕顯示用量 (若有的話)，否則顯示乾淨型號
             modelText.textContent = data.usage || data.model;
-            // 藍色標籤始終顯示最乾淨的型號名稱
             if (activeModelText) activeModelText.textContent = data.model;
         }
         instanceText.textContent = `Port ${currentViewingPort}`;
@@ -85,23 +81,21 @@ async function fetchAppState() {
             currentDisplayTitle = `Port ${currentViewingPort}`;
         }
 
-        if (mainTitle) mainTitle.textContent = currentDisplayTitle;
+        if (mainTitle && mainTitle.textContent !== currentDisplayTitle) {
+            mainTitle.textContent = currentDisplayTitle;
+        }
 
-        // Dynamic Version Injection (Single Source of Truth)
         if (data.version) {
             const vMajorMinor = data.version.split('.').slice(0, 2).join('.');
             const vLabel = `V${vMajorMinor}`;
             cachedVLabel = vLabel;
 
             document.title = `${currentDisplayTitle} - Antigravity ${vLabel}`;
-            if (mainTitle) mainTitle.textContent = currentDisplayTitle;
-
             if (messageInput) messageInput.placeholder = `Message ${vLabel}...`;
 
             const loadingMsg = document.querySelector('.loading-state p');
             if (loadingMsg) loadingMsg.textContent = `Waiting for ${vLabel} snapshot...`;
 
-            // Only update status text if it already includes 'Live'
             if (statusText.textContent.includes('Live')) {
                 statusText.textContent = `Live (${vLabel})`;
             }
@@ -112,7 +106,6 @@ async function fetchAppState() {
     }
 }
 
-// ... (in loadSnapshot)
 async function loadSnapshot() {
     try {
         const res = await fetchWithAuth(`/snapshot?port=${currentViewingPort}&_t=${Date.now()}`);
@@ -140,27 +133,19 @@ function connectWebSocket() {
         ws.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data);
-
-                // Handle snapshot update
                 if (data.type === 'snapshot_update' && !userIsScrolling) {
-                    // Update current viewing port UI if server indicates a switch (Auto-Hunt)
                     if (data.port && data.port !== currentViewingPort) {
-                        console.log(`[App] Server forced port switch to ${data.port}`);
                         currentViewingPort = data.port;
                         localStorage.setItem('lastViewingPort', currentViewingPort);
                         if (instanceText) instanceText.textContent = `Port ${data.port}`;
-                        // Title will be updated by fetchAppState soon, but we can set a placeholder
                         currentDisplayTitle = `Port ${data.port}`;
                         if (mainTitle) mainTitle.textContent = currentDisplayTitle;
-                        lastHash = ''; // Reset hash to force full re-render on port switch
+                        lastHash = '';
                     }
                     renderSnapshot(data);
                 }
-
-                // Handle manual/force switch acknowledgment
                 if (data.type === 'force_port_switch' || data.type === 'switched') {
                     const newPort = data.port || data.newPort;
-                    console.log(`[App] Port switched to ${newPort}`);
                     currentViewingPort = newPort;
                     localStorage.setItem('lastViewingPort', currentViewingPort);
                     if (instanceText) instanceText.textContent = `Port ${newPort}`;
@@ -173,51 +158,42 @@ function connectWebSocket() {
         };
 
         ws.onclose = (e) => {
-            console.warn('[App] WS Closed', e.code);
             updateStatus(false);
-            if (statusText) statusText.textContent = `Disconnected (${e.code})`;
             setTimeout(connectWebSocket, 2000);
         };
 
         ws.onerror = (err) => {
-            console.error('[App] WS Error', err);
-            if (statusText) statusText.textContent = '❌ WS Err';
+            updateStatus(false);
         };
     } catch (e) {
-        if (statusText) statusText.textContent = '❌ WS Setup Err';
+        updateStatus(false);
     }
 }
 
-// Scroll Sync (Client -> Server)
 let lastScrollTime = 0;
-chatContainer.addEventListener('scroll', () => {
-    userIsScrolling = true;
-    clearTimeout(userScrollLockUntil);
-    userScrollLockUntil = setTimeout(() => userIsScrolling = false, 1000);
+if (chatContainer) {
+    chatContainer.addEventListener('scroll', () => {
+        userIsScrolling = true;
+        clearTimeout(userScrollLockUntil);
+        userScrollLockUntil = setTimeout(() => userIsScrolling = false, 1000);
 
-    const now = Date.now();
-    if (now - lastScrollTime > 50 && ws && ws.readyState === WebSocket.OPEN) {
-        lastScrollTime = now;
-        ws.send(JSON.stringify({
-            type: 'scroll_event',
-            scrollTop: chatContainer.scrollTop
-        }));
-    }
-});
-
-let cachedVLabel = 'V4.1'; // Initial fallback, will be updated by fetchAppState
+        const now = Date.now();
+        if (now - lastScrollTime > 50 && ws && ws.readyState === WebSocket.OPEN) {
+            lastScrollTime = now;
+            ws.send(JSON.stringify({ type: 'scroll_event', scrollTop: chatContainer.scrollTop }));
+        }
+    });
+}
 
 function updateStatus(connected) {
-    statusDot.className = connected ? 'status-dot connected' : 'status-dot disconnected';
-    statusText.textContent = connected ? `Live (${cachedVLabel})` : 'Connecting...';
+    if (statusDot) statusDot.className = connected ? 'status-dot connected' : 'status-dot disconnected';
+    if (statusText) statusText.textContent = connected ? `Live (${cachedVLabel})` : 'Connecting...';
 }
 
-// Render Logic (V2 Style + CSS Fixes)
 function renderSnapshot(data) {
     if (!data) return;
-
     if (data.error || !data.html) {
-        if (!lastHash) { // Only show error if we have nothing else to display
+        if (!lastHash) {
             const isWrongWindow = data.error === 'wrong_window';
             chatContent.innerHTML = `
                 <div class="error-state" style="padding: 20px; text-align: center; color: ${isWrongWindow ? '#f59e0b' : '#ef4444'};">
@@ -225,28 +201,21 @@ function renderSnapshot(data) {
                     <div style="font-weight: bold; margin-bottom: 8px;">${isWrongWindow ? '請開啟 Antigravity 對話框' : (data.error || 'No content found')}</div>
                     ${isWrongWindow ? `
                     <div style="font-size: 13px; opacity: 0.8; line-height: 1.6;">
-                        目前連線到的是 VS Code 主視窗，<br>
-                        而不是 Antigravity 的對話框。<br><br>
-                        <strong>請在電腦上：</strong><br>
-                        1. 打開 Antigravity<br>
-                        2. 點擊左側 Chat 圖示<br>
-                        3. 確保對話框是展開的
-                    </div>` : `
-                    <div style="font-size: 11px; margin-top: 10px; opacity: 0.6;">Try switching ports or opening the chat panel.</div>`}
+                        目前連線到的是 VS Code 主視窗，而不是 Antigravity 的對話框。<br><br>
+                        <strong>請在電腦上：</strong> 打開 Antigravity 點擊 Chat 圖示
+                    </div>` : ''}
                 </div>
             `;
         }
         return;
     }
 
-    // Re-enabled hash check for UI stability
     if (data.hash === lastHash && !forceScrollToBottom) return;
     lastHash = data.hash;
 
     const scrollPos = chatContainer.scrollTop;
     const isNearBottom = chatContainer.scrollHeight - scrollPos - chatContainer.clientHeight < 120;
 
-    // Inject CSS Fixes (High Contrast)
     if (!document.getElementById('v4-styles')) {
         const style = document.createElement('style');
         style.id = 'v4-styles';
@@ -258,10 +227,10 @@ function renderSnapshot(data) {
                 fill: #ffffff !important;
                 font-family: 'Inter', 'Microsoft JhengHei', sans-serif !important; 
                 -webkit-font-smoothing: antialiased !important;
-                position: static !important; /* Force natural flow */
+                position: static !important;
                 width: auto !important;
                 height: auto !important;
-                min-height: 0px !important; /* Kill massive height stretches */
+                min-height: 0px !important;
                 max-width: 100% !important;
                 border: none !important;
                 box-shadow: none !important;
@@ -269,67 +238,17 @@ function renderSnapshot(data) {
                 top: auto !important;
                 left: auto !important;
             }
-            
-            /* Root-level forced background if transparent fallback fails */
             #chatContent { background-color: #0f172a !important; }
-
-            /* --- Layout Fixes --- */
-            [style*="height: 9"], [style*="height: 8"], [style*="height: 7"], 
-            [style*="min-height: 9"], [style*="min-height: 8"], [style*="min-height: 7"] {
-                height: auto !important;
-                min-height: 0px !important;
-            }
-
-            /* --- UI Element Cleanup (Hiding Noise) --- */
-            /* Hide Command Palette / Quick Open overlays */
-            [class*="quick-input"], [class*="command-palette"], [placeholder*="Open window"], 
-            .monaco-inputbox, .quick-input-widget, 
-            /* Hide toolbars and banners */
-            [class*="toolbar"], [class*="banner"], [class*="footer"], [class*="menu"],
-            #cascade button, #cascade input, #cascade textarea, #cascade [role="button"] {
-                display: none !important;
-            }
-
-            /* --- CRITICAL: Contain Images and SVGs --- */
-            #ag-chat-root img, #cascade img, #ag-chat-root svg, #cascade svg {
-                max-width: 100% !important;
-                height: auto !important;
-                max-height: 70vh !important;
-                object-fit: contain !important;
-                display: block !important;
-            }
-            
-            svg:not([class*="code-block-copy"]):not([width]):not([height]) {
-                 width: 1.25em !important;
-                 height: 1.25em !important;
-            }
-
-            #cascade pre, #cascade code {
-                background-color: #1e293b !important;
-                border: 1px solid #334155 !important;
-                border-radius: 6px !important;
-                padding: 8px !important;
-                color: #e2e8f0 !important;
-                overflow-x: auto !important;
-                display: block !important;
-            }
-
-            #cascade p, #cascade span, #cascade div { 
-                color: #ffffff !important; 
-                opacity: 1 !important;
-                line-height: 1.6 !important;
-                font-size: 15px !important;
-                background: transparent !important;
-            }
-
-            #cascade a { color: #60a5fa !important; font-weight: 600 !important; text-decoration: underline !important; }
-            ::-webkit-scrollbar { width: 4px !important; }
-            ::-webkit-scrollbar-thumb { background: #475569 !important; border-radius: 10px; }
-            `;
+            [style*="height: 9"], [style*="height: 8"], [style*="height: 7"] { height: auto !important; min-height: 0px !important; }
+            [class*="quick-input"], [class*="command-palette"], [class*="toolbar"], [class*="banner"] { display: none !important; }
+            #ag-chat-root img, #cascade img { max-width: 100% !important; height: auto !important; display: block !important; }
+            #cascade pre, #cascade code { background-color: #1e293b !important; padding: 8px !important; color: #e2e8f0 !important; overflow-x: auto !important; display: block !important; }
+            #cascade p, #cascade span, #cascade div { color: #ffffff !important; line-height: 1.6 !important; font-size: 15px !important; }
+            #cascade a { color: #60a5fa !important; text-decoration: underline !important; }
+        `;
         document.head.appendChild(style);
     }
 
-    // Add CSS from snapshot (Optimized V4.2 Differential)
     if (data.css && data.cssType !== 'cached') {
         let dynamicStyle = document.getElementById('snapshot-styles');
         if (!dynamicStyle) {
@@ -337,12 +256,9 @@ function renderSnapshot(data) {
             dynamicStyle.id = 'snapshot-styles';
             document.head.appendChild(dynamicStyle);
         }
-        if (dynamicStyle.textContent !== data.css) {
-            dynamicStyle.textContent = data.css;
-        }
+        dynamicStyle.textContent = data.css;
     }
 
-    // Incremental DOM Update (Simple but effective to prevent total reflow if hash matches)
     if (chatContent.innerHTML !== data.html) {
         chatContent.innerHTML = data.html;
     }
@@ -357,25 +273,16 @@ function scrollToBottom() {
     chatContainer.scrollTo({ top: chatContainer.scrollHeight, behavior: 'smooth' });
 }
 
-// Messaging Logic (V3 Robust Retry)
-// --- Messaging Logic (V4.2 Optimized) ---
 async function sendMessage(retryCount = 0) {
     const msg = messageInput.value.trim();
     if (!msg && !pendingImage) return;
-
-    // Block concurrent sends
     if (isSending && retryCount === 0) return;
 
     if (retryCount === 0) {
         isSending = true;
         sendBtn.disabled = true;
         sendBtn.innerHTML = '<div class="loading-spinner"></div>';
-        // NEW: Generate stable msgId for this specific message attempt
-        window.currentMsgId = 'm_' + Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
-        console.log('[App] Starting new send task:', window.currentMsgId);
-    } else {
-        const dots = '.'.repeat((retryCount % 3) + 1);
-        statusText.textContent = `⏳ Retrying${dots} (${retryCount}/5)`;
+        window.currentMsgId = 'm_' + Date.now().toString(36);
     }
 
     try {
@@ -383,22 +290,14 @@ async function sendMessage(retryCount = 0) {
         if (pendingImage) payload.image = pendingImage;
 
         const res = await fetchWithAuth(`/send?port=${currentViewingPort}&_t=${Date.now()}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
         });
+        const data = await res.json();
 
-        const data = await res.json().catch(() => ({ error: 'Invalid JSON' }));
-
-        // Handle Success or Deduped Case
         if (data.ok || data.ignored) {
-            console.log('[App] Send Success:', data.method || 'ignored');
-
-            // Clear inputs ONLY on success
             messageInput.value = '';
             pendingImage = null;
             if (attachBtn) attachBtn.classList.remove('active');
-
             statusText.textContent = `Live (${cachedVLabel})`;
             isSending = false;
             sendBtn.disabled = false;
@@ -407,30 +306,20 @@ async function sendMessage(retryCount = 0) {
             return;
         }
 
-        // Handle "Busy" with automatic retry
         if (data.reason === 'busy' && retryCount < 5) {
-            console.log('[App] Server busy, retrying in 2s...');
             setTimeout(() => sendMessage(retryCount + 1), 2000);
             return;
         }
-
-        throw new Error(data.error || data.reason || 'Send failed');
-
+        throw new Error(data.error || 'Send failed');
     } catch (e) {
-        console.error('[App] Final Send Error:', e);
+        isSending = false;
+        sendBtn.disabled = false;
+        sendBtn.innerHTML = 'Send';
         statusText.textContent = `❌ ${e.message}`;
-        resetSendState();
     }
 }
 
-function resetSendState() {
-    isSending = false;
-    sendBtn.disabled = false;
-    sendBtn.innerHTML = 'Send';
-    statusText.textContent = 'Error';
-}
-
-// --- Modal & Actions ---
+// --- Modals ---
 const MODELS = [
     "Gemini 3 Pro (High)", "Gemini 3 Pro (Low)", "Gemini 3 Flash",
     "Claude Sonnet 4.5", "Claude Sonnet 4.5 (Thinking)",
@@ -439,14 +328,11 @@ const MODELS = [
 ];
 
 function showModal(title, options, onSelect) {
-    const list = document.getElementById('modalList');
-    list.innerHTML = '';
-
-    // Add Title
+    modalList.innerHTML = '';
     const titleEl = document.createElement('div');
     titleEl.textContent = title;
     titleEl.className = 'modal-title';
-    list.appendChild(titleEl);
+    modalList.appendChild(titleEl);
 
     options.forEach(opt => {
         const div = document.createElement('div');
@@ -454,376 +340,248 @@ function showModal(title, options, onSelect) {
         div.className = 'modal-option';
         div.onclick = () => {
             onSelect(opt.value || opt);
-            document.getElementById('modalOverlay').style.display = 'none';
+            modalOverlay.style.display = 'none';
         };
-        list.appendChild(div);
+        modalList.appendChild(div);
     });
-    document.getElementById('modalOverlay').style.display = 'flex';
+    modalOverlay.style.display = 'flex';
+    // 動畫只播放一次
+    const panel = modalOverlay.querySelector('.modal-panel');
+    if (panel) {
+        panel.classList.remove('animate-in');
+        void panel.offsetWidth;
+        panel.classList.add('animate-in');
+        panel.addEventListener('animationend', () => panel.classList.remove('animate-in'), { once: true });
+    }
 }
 
-// Background close for modals
-document.getElementById('modalOverlay').addEventListener('click', (e) => {
-    if (e.target.id === 'modalOverlay') {
-        document.getElementById('modalOverlay').style.display = 'none';
-    }
+modalOverlay.addEventListener('click', (e) => {
+    if (e.target.id === 'modalOverlay') modalOverlay.style.display = 'none';
 });
 
-// Interactive Handlers
-document.querySelector('.setting-chip:nth-child(1)').onclick = () => { // Mode
-    showModal('Select Mode', ['Fast', 'Planning'], async (val) => {
-        await fetchWithAuth(`/set-mode?port=${currentViewingPort}`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: val })
+// --- Slot Manager (秒開：先抓資料再開窗) ---
+let isSlotManagerOpening = false;
+let lastSlotManagerCallTime = 0;
+const openSlotManager = async () => {
+    const now = Date.now();
+    if (now - lastSlotManagerCallTime < 500 || isSlotManagerOpening) return;
+    lastSlotManagerCallTime = now;
+    isSlotManagerOpening = true;
+
+    try {
+        const res = await fetchWithAuth('/slots');
+        const data = await res.json();
+
+        const fragment = document.createDocumentFragment();
+        const titleDiv = document.createElement('div');
+        titleDiv.className = 'modal-title';
+        titleDiv.textContent = 'Slot Manager / 工作槽位管理';
+        fragment.appendChild(titleDiv);
+
+        data.slots.forEach(slot => {
+            const item = document.createElement('div');
+            item.className = 'slot-item';
+            item.innerHTML = `
+                <div class="slot-info">
+                    <div class="slot-port">PORT ${slot.port}${slot.port === currentViewingPort ? ' • VIEWING' : ''}</div>
+                    <div class="slot-title">${slot.title || `Slot ${slot.port}`}</div>
+                    <div class="slot-status ${slot.running ? 'status-running' : 'status-stopped'}">${slot.running ? 'RUNNING' : 'STOPPED'}</div>
+                </div>
+            `;
+            const controls = document.createElement('div');
+            controls.className = 'slot-controls';
+
+            if (slot.running) {
+                if (slot.port !== currentViewingPort) {
+                    const switchBtn = document.createElement('button');
+                    switchBtn.className = 'btn-s btn-switch';
+                    switchBtn.textContent = 'Switch';
+                    switchBtn.onclick = () => {
+                        currentViewingPort = slot.port;
+                        localStorage.setItem('lastViewingPort', slot.port);
+                        instanceText.textContent = `Port ${slot.port}`;
+                        currentDisplayTitle = `Port ${slot.port}`;
+                        if (window.titleObserver) window.titleObserver.disconnect();
+                        if (mainTitle) mainTitle.textContent = currentDisplayTitle;
+                        if (window.titleObserver && mainTitle) window.titleObserver.observe(mainTitle, { childList: true, characterData: true, subtree: true });
+                        lastHash = '';
+                        chatContent.innerHTML = `<div class="loading-state"><div class="loading-spinner"></div><p>Switching...</p></div>`;
+                        if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'switch_port', port: slot.port }));
+                        fetchAppState(); loadSnapshot();
+                        modalOverlay.style.display = 'none';
+                    };
+                    controls.appendChild(switchBtn);
+                }
+                const stopBtn = document.createElement('button');
+                stopBtn.className = 'btn-s btn-stop';
+                stopBtn.textContent = 'Stop';
+                stopBtn.onclick = async () => {
+                    stopBtn.disabled = true;
+                    await fetchWithAuth('/stop-slot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ port: slot.port }) });
+                    modalOverlay.style.display = 'none';
+                    openSlotManager();
+                };
+                controls.appendChild(stopBtn);
+            } else {
+                const startBtn = document.createElement('button');
+                startBtn.className = 'btn-s btn-start';
+                startBtn.textContent = 'Start';
+                startBtn.onclick = async () => {
+                    startBtn.disabled = true;
+                    await fetchWithAuth('/start-slot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ port: slot.port }) });
+                    modalOverlay.style.display = 'none';
+                    openSlotManager();
+                };
+                controls.appendChild(startBtn);
+            }
+            item.appendChild(controls);
+            fragment.appendChild(item);
         });
-        setTimeout(fetchAppState, 1000);
-    });
+
+        const panicBtn = document.createElement('button');
+        panicBtn.className = 'btn-kill-all';
+        panicBtn.textContent = 'Panic: Kill All (清理記憶體)';
+        panicBtn.onclick = async () => {
+            if (confirm('Stop ALL?')) { await fetchWithAuth('/kill-all', { method: 'POST' }); modalOverlay.style.display = 'none'; openSlotManager(); }
+        };
+        fragment.appendChild(panicBtn);
+
+        // 一次性寫入並顯示（秒開）
+        modalList.innerHTML = '';
+        modalList.appendChild(fragment);
+        modalOverlay.style.display = 'flex';
+        const panel = modalOverlay.querySelector('.modal-panel');
+        if (panel) {
+            panel.classList.remove('animate-in');
+            void panel.offsetWidth;
+            panel.classList.add('animate-in');
+            panel.addEventListener('animationend', () => panel.classList.remove('animate-in'), { once: true });
+        }
+    } catch (e) {
+        console.error('[UI] Slot error:', e);
+    } finally {
+        isSlotManagerOpening = false;
+    }
 };
 
-document.querySelector('.setting-chip:nth-child(2)').onclick = async () => { // Model
-    statusText.textContent = '🔍 Scanning models...';
+// --- Model Selector (Robust) ---
+let isModelSelectorOpening = false;
+const openModelSelector = async () => {
+    if (isModelSelectorOpening) return;
+    isModelSelectorOpening = true;
+    const oldStatus = statusText.textContent;
+    statusText.textContent = '🔍 Scanning...';
     try {
         const res = await fetchWithAuth(`/available-models?port=${currentViewingPort}`);
         const data = await res.json();
-
-        if (data.models && data.models.length > 0) {
-            showModal('Select Model (Detected)', data.models, async (val) => {
-                statusText.textContent = `🚀 Switching to ${val}...`;
-                await fetchWithAuth(`/set-model?port=${currentViewingPort}`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: val })
-                });
-                setTimeout(fetchAppState, 1000);
-            });
-        } else {
-            console.warn('Dynamic discovery failed, using fallback list');
-            showModal('Select Model (Fallback)', MODELS, async (val) => {
-                await fetchWithAuth(`/set-model?port=${currentViewingPort}`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: val })
-                });
-                setTimeout(fetchAppState, 1000);
-            });
-        }
-    } catch (e) {
-        console.error('Discovery error', e);
-        showModal('Select Model (Fallback)', MODELS, async (val) => {
+        const handleSelect = async (val) => {
+            statusText.textContent = `🚀 Switching...`;
             await fetchWithAuth(`/set-model?port=${currentViewingPort}`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: val })
+            });
+            setTimeout(fetchAppState, 1000);
+        };
+        if (data.models && data.models.length > 0) showModal('Select Model (Detected)', data.models, handleSelect);
+        else showModal('Select Model (Fallback)', MODELS, handleSelect);
+    } catch (e) {
+        showModal('Select Model (Fallback)', MODELS, (val) => {
+            fetchWithAuth(`/set-model?port=${currentViewingPort}`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: val })
             });
             setTimeout(fetchAppState, 1000);
         });
     } finally {
-        statusText.textContent = `Live (${cachedVLabel})`;
+        statusText.textContent = oldStatus;
+        isModelSelectorOpening = false;
     }
 };
 
-
-// Slot Manager Logic (Moved to Main Title)
-const openSlotManager = async () => {
-    const res = await fetchWithAuth('/slots');
-    const data = await res.json();
-
-    const panel = document.getElementById('modalList');
-    panel.innerHTML = '';
-
-    // Header
-    const header = document.createElement('div');
-    header.className = 'modal-title';
-    header.textContent = 'Slot Manager / 工作槽位管理';
-    panel.appendChild(header);
-
-    // ... (rest of the slot rendering logic)
-    data.slots.forEach(slot => {
-        const item = document.createElement('div');
-        item.className = 'slot-item';
-
-        // Info
-        const info = document.createElement('div');
-        info.className = 'slot-info';
-
-        const portLabel = document.createElement('div');
-        portLabel.className = 'slot-port';
-        portLabel.textContent = `PORT ${slot.port}${slot.port === currentViewingPort ? ' • VIEWING' : ''} `;
-
-        const title = document.createElement('div');
-        title.className = 'slot-title';
-        title.textContent = slot.title || `Slot ${slot.port} `;
-
-        const status = document.createElement('div');
-        status.className = `slot-status ${slot.running ? 'status-running' : 'status-stopped'}`;
-        status.textContent = slot.running ? 'RUNNING' : 'STOPPED';
-
-        info.appendChild(portLabel);
-        info.appendChild(title);
-        info.appendChild(status);
-        item.appendChild(info);
-
-        // Controls
-        const controls = document.createElement('div');
-        controls.className = 'slot-controls';
-
-        if (slot.running) {
-            if (slot.port !== currentViewingPort) {
-                const switchBtn = document.createElement('button');
-                switchBtn.className = 'btn-s btn-switch';
-                switchBtn.textContent = 'Switch';
-                switchBtn.onclick = () => {
-                    const targetPort = slot.port;
-                    currentViewingPort = targetPort;
-                    localStorage.setItem('lastViewingPort', targetPort);
-
-                    // Update UI state immediately
-                    instanceText.textContent = `Port ${targetPort}`;
-                    currentDisplayTitle = `Port ${targetPort}`;
-                    if (mainTitle) mainTitle.textContent = currentDisplayTitle;
-                    lastHash = ''; // Force render next frame
-
-                    // Show loading state
-                    chatContent.innerHTML = `
-                        <div class="loading-state">
-                            <div class="loading-spinner"></div>
-                            <p>Switching to Port ${targetPort}...</p>
-                        </div>
-                    `;
-
-                    // Notify Server
-                    if (ws && ws.readyState === WebSocket.OPEN) {
-                        ws.send(JSON.stringify({ type: 'switch_port', port: targetPort }));
-                    }
-
-                    // Actions
-                    fetchAppState();
-                    loadSnapshot();
-                    modalOverlay.style.display = 'none'; // Auto-close for better UX
-                };
-                controls.appendChild(switchBtn);
-            }
-
-            const stopBtn = document.createElement('button');
-            stopBtn.className = 'btn-s btn-stop';
-            stopBtn.textContent = 'Stop';
-            stopBtn.onclick = async () => {
-                stopBtn.disabled = true;
-                stopBtn.textContent = '...';
-                await fetchWithAuth('/stop-slot', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ port: slot.port })
-                });
-                setTimeout(() => openSlotManager(), 1000);
-            };
-            controls.appendChild(stopBtn);
-        } else {
-            const startBtn = document.createElement('button');
-            startBtn.className = 'btn-s btn-start';
-            startBtn.textContent = 'Start';
-            startBtn.onclick = async () => {
-                startBtn.disabled = true;
-                startBtn.textContent = '...';
-                await fetchWithAuth('/start-slot', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ port: slot.port })
-                });
-                setTimeout(() => openSlotManager(), 3000); // Give it time
-            };
-            controls.appendChild(startBtn);
-        }
-
-        item.appendChild(controls);
-        panel.appendChild(item);
+// --- Mode Selector (Robust) ---
+let isModeSelectorOpening = false;
+const openModeSelector = () => {
+    if (isModeSelectorOpening) return;
+    isModeSelectorOpening = true;
+    showModal('Select Mode', ['Fast', 'Planning'], async (val) => {
+        await fetchWithAuth(`/set-mode?port=${currentViewingPort}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: val })
+        });
+        setTimeout(fetchAppState, 1000);
+        isModeSelectorOpening = false;
     });
-
-    // Panic Button
-    const panicBtn = document.createElement('button');
-    panicBtn.className = 'btn-kill-all';
-    panicBtn.textContent = 'Panic: Kill All Instances (清理記憶體)';
-    panicBtn.onclick = async () => {
-        if (!confirm('Are you sure you want to stop ALL instances?')) return;
-        panicBtn.textContent = 'Killing...';
-        await fetchWithAuth('/kill-all', { method: 'POST' });
-        setTimeout(() => openSlotManager(), 2000);
+    // If user clicks background, we must release lock
+    const originalClose = modalOverlay.onclick;
+    modalOverlay.onclick = (e) => {
+        if (e.target.id === 'modalOverlay') {
+            isModeSelectorOpening = false;
+            modalOverlay.style.display = 'none';
+            modalOverlay.onclick = originalClose;
+        }
     };
-    panel.appendChild(panicBtn);
-
-    document.getElementById('modalOverlay').style.display = 'flex';
 };
 
-// Bind to Main Title
-if (mainTitle) mainTitle.onclick = openSlotManager;
-
-// Remove old binding from hidden chip (keeping logic accessible via openSlotManager)
-// document.querySelector('.setting-chip:nth-child(3)').onclick = ... 
-
-
-// --- Event Listeners ---
-console.log('[DEBUG] sendBtn element:', sendBtn);
-if (sendBtn) {
-    sendBtn.onclick = () => {
-        console.log('[DEBUG] sendBtn clicked!');
-        sendMessage(0);
-    };
-} else {
-    console.error('[DEBUG] sendBtn element NOT FOUND!');
-}
-
+// --- UI Binding & Start ---
+if (sendBtn) sendBtn.onclick = () => sendMessage(0);
 messageInput.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(0); } };
 refreshBtn.onclick = () => { location.reload(); };
-chatContainer.onscroll = () => {
-    userIsScrolling = true;
-    clearTimeout(window.scrollTimer);
-    window.scrollTimer = setTimeout(() => userIsScrolling = false, 2000);
-};
-document.getElementById('scrollToBottom').onclick = () => {
-    scrollToBottom();
-    forceScrollToBottom = true; // Temporary lock
-};
+document.getElementById('scrollToBottom').onclick = () => { scrollToBottom(); forceScrollToBottom = true; };
 
-// --- History & New Chat Logic ---
 if (newChatBtn) {
     newChatBtn.onclick = async () => {
-        newChatBtn.style.opacity = '0.5';
         try {
             const res = await fetchWithAuth(`/new-chat?port=${currentViewingPort}`, { method: 'POST' });
-            const data = await res.json();
-            if (data.success) {
-                statusText.textContent = '🆕 Starting new chat...';
-                setTimeout(() => {
-                    loadSnapshot();
-                    fetchAppState();
-                }, 2000);
-            }
-        } catch (e) {
-            console.error('New Chat failed', e);
-        } finally {
-            newChatBtn.style.opacity = '1';
-        }
+            if ((await res.json()).success) { statusText.textContent = '🆕 New chat...'; setTimeout(() => { loadSnapshot(); fetchAppState(); }, 2000); }
+        } catch (e) { }
     };
 }
 
 if (historyBtn) {
     historyBtn.onclick = async () => {
-        historyBtn.style.opacity = '0.5';
         try {
             const res = await fetchWithAuth(`/history?port=${currentViewingPort}`);
             const data = await res.json();
-            if (data.success && data.items) {
-                renderHistoryModal(data.items);
-            } else {
-                alert('No history found or failed to load.');
-            }
-        } catch (e) {
-            console.error('History load failed', e);
-        } finally {
-            historyBtn.style.opacity = '1';
-        }
+            if (data.success && data.items) renderHistoryModal(data.items);
+        } catch (e) { }
     };
 }
 
 function renderHistoryModal(items) {
-    modalList.innerHTML = '';
-
-    const title = document.createElement('div');
-    title.className = 'modal-title';
-    title.textContent = 'Chat History';
-    modalList.appendChild(title);
-
+    modalList.innerHTML = '<div class="modal-title">History</div>';
     items.forEach((item, index) => {
         const div = document.createElement('div');
         div.className = `history-item ${item.active ? 'active' : ''}`;
-
-        div.innerHTML = `
-            <div class="history-item-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-                </svg>
-            </div>
-            <div class="history-item-content">
-                <div class="history-item-title">${item.title || 'Untitled Chat'}</div>
-            </div>
-        `;
-
+        div.textContent = item.title || 'Untitled Chat';
         div.onclick = async () => {
             modalOverlay.style.display = 'none';
-            chatContent.innerHTML = `
-                <div class="loading-state">
-                    <div class="loading-spinner"></div>
-                    <p>Switching to chat...</p>
-                </div>
-            `;
-            try {
-                const res = await fetchWithAuth(`/select-chat?port=${currentViewingPort}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ index })
-                });
-                const result = await res.json();
-                if (result.success) {
-                    setTimeout(() => {
-                        loadSnapshot();
-                        fetchAppState();
-                    }, 1500);
-                }
-            } catch (e) {
-                console.error('Select chat failed', e);
-                loadSnapshot();
-            }
+            chatContent.innerHTML = `<div class="loading-state"><div class="loading-spinner"></div><p>Loading...</p></div>`;
+            await fetchWithAuth(`/select-chat?port=${currentViewingPort}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index }) });
+            setTimeout(() => { loadSnapshot(); fetchAppState(); }, 1500);
         };
-
         modalList.appendChild(div);
     });
-
     modalOverlay.style.display = 'flex';
 }
 
-// Image Upload Event Listener
 if (imageInput) {
     imageInput.addEventListener('change', (e) => {
-        console.log('[DEBUG] change event triggered!');
         const file = e.target.files[0];
-        console.log('[DEBUG] selected file:', file);
         if (!file) return;
-
-        // 立即顯示載入狀態
-        if (attachBtn) {
-            attachBtn.classList.add('active');
-            attachBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
-        }
-        statusText.textContent = '📷 Processing image...';
-
+        if (attachBtn) attachBtn.classList.add('active');
         const reader = new FileReader();
-        reader.onload = (event) => {
-            pendingImage = event.target.result;
-            console.log('[DEBUG] Image loaded, size:', Math.round(pendingImage.length / 1024), 'KB');
-
-            // 恢復圖示並顯示完成狀態
-            if (attachBtn) {
-                attachBtn.classList.add('active');
-                attachBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
-            }
-            statusText.textContent = '📷 Image ready! Click Send to upload';
-
-            // 3秒後恢復狀態文字
-            setTimeout(() => {
-                statusText.textContent = `Live (${cachedVLabel})`;
-            }, 3000);
-        };
-        reader.onerror = () => {
-            console.error('[App] Failed to read image file');
-            if (attachBtn) attachBtn.classList.remove('active');
-            statusText.textContent = '❌ Failed to read image';
-            alert('Failed to read image file');
-        };
+        reader.onload = (ev) => { pendingImage = ev.target.result; statusText.textContent = '📷 Ready'; setTimeout(() => statusText.textContent = `Live (${cachedVLabel})`, 3000); };
         reader.readAsDataURL(file);
     });
-} else {
-    console.error('[DEBUG] imageInput element not found!');
 }
 
-// Start
 if (mainTitle) {
     mainTitle.textContent = currentDisplayTitle;
-    // Nuclear Option: Keep it from changing
-    const observer = new MutationObserver(() => {
-        if (mainTitle.textContent !== currentDisplayTitle) {
-            mainTitle.textContent = currentDisplayTitle;
-        }
+    window.titleObserver = new MutationObserver(() => {
+        if (mainTitle.textContent !== currentDisplayTitle) mainTitle.textContent = currentDisplayTitle;
     });
-    observer.observe(mainTitle, { childList: true, characterData: true, subtree: true });
+    window.titleObserver.observe(mainTitle, { childList: true, characterData: true, subtree: true });
 }
+
+window.openSlotManager = openSlotManager;
+window.openModelSelector = openModelSelector;
+window.openModeSelector = openModeSelector;
+
 connectWebSocket();

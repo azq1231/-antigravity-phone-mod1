@@ -1,4 +1,4 @@
-import { exec } from 'child_process';
+import net from 'net';
 import http from 'http';
 
 export function hashString(str) {
@@ -33,16 +33,16 @@ export function getJson(url) {
 
 export async function isPortInUse(port) {
     return new Promise((resolve) => {
-        exec(`netstat -ano | findstr LISTENING | findstr :${port}`, (err, stdout) => {
-            if (err || !stdout) return resolve(false);
-            const lines = stdout.split('\n');
-            const match = lines.some(line => {
-                const parts = line.trim().split(/\s+/);
-                const localAddr = parts[1] || '';
-                return localAddr.endsWith(`:${port}`);
-            });
-            resolve(match);
+        const server = net.createServer();
+        server.once('error', (err) => {
+            // EADDRINUSE = port 被佔用中
+            resolve(err.code === 'EADDRINUSE');
         });
+        server.once('listening', () => {
+            // 能綁定代表 port 沒有被用
+            server.close(() => resolve(false));
+        });
+        server.listen(port, '127.0.0.1');
     });
 }
 

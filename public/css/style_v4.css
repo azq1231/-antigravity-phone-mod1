@@ -548,9 +548,14 @@ textarea::-webkit-scrollbar {
     padding: 20px;
     display: flex;
     flex-direction: column;
-    animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     max-height: 80vh;
     overflow-y: auto;
+    /* 動畫只在首次出現時播放，不會因 innerHTML 變化而重播 */
+    transform: translateY(0);
+}
+
+.modal-panel.animate-in {
+    animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 .modal-close-btn {

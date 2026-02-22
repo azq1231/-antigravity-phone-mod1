@@ -6,12 +6,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Antigravity V4.2 Stable</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="css/style_v4.css">
+    <link rel="stylesheet" href="css/style_v4.css?v=20260222_2">
 </head>
 
 <body>
     <header class="header">
-        <h1 id="mainTitle">Port 9000</h1>
+        <h1 id="mainTitle"
+            onclick="event.stopPropagation(); event.preventDefault(); if(window.openSlotManager) window.openSlotManager();"
+            style="cursor: pointer;">Port
+            9000</h1>
         <div class="header-controls">
             <button class="icon-btn" id="newChatBtn" title="New Chat">+</button>
             <button class="icon-btn" id="historyBtn" title="Chat History">
@@ -29,11 +32,15 @@
     </header>
 
     <div class="settings-bar">
-        <div class="setting-chip"><span id="modeText">Unknown</span></div>
-        <div class="setting-chip" id="modelBtn"><span id="modelText">Unknown</span></div>
+        <div class="setting-chip" onclick="if(window.openModeSelector) window.openModeSelector();"
+            style="cursor: pointer;"><span id="modeText">Unknown</span></div>
+        <div class="setting-chip" id="modelBtn" onclick="if(window.openModelSelector) window.openModelSelector();"
+            style="cursor: pointer;"><span id="modelText">Unknown</span></div>
         <div class="setting-chip" id="currentModelBadge"
-            style="cursor: default; border-color: rgba(99,179,237,0.4); background: rgba(99,179,237,0.1);">
-            <span id="activeModelText" style="font-size: 10px; color: #63b3ed; font-weight: 600;">--</span>
+            onclick="if(window.openModelSelector) window.openModelSelector();"
+            style="cursor: pointer; border-color: rgba(99,179,237,0.4); background: rgba(99,179,237,0.1);">
+            <span id="activeModelText"
+                style="pointer-events: none; font-size: 10px; color: #63b3ed; font-weight: 600;">--</span>
         </div>
         <div class="setting-chip" style="display: none;"><span id="instanceText">Port 9000</span></div>
     </div>
@@ -73,7 +80,7 @@
         </div>
     </div>
 
-    <script src="js/app_v4.js?v=1771424900"></script>
+    <script src="js/app_v4.js?v=20260222_8"></script>
 </body>
 
 </html>
