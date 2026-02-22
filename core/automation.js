@@ -551,54 +551,69 @@ export async function getAppState(cdpList) {
     const EXP = `(async () => {
     try {
         const state = { mode: 'Unknown', model: 'Unknown', usage: '', title: document.title || "" };
-        const allEls = Array.from(document.querySelectorAll('*'));
         
-        // 1. 模式偵測
-        for (const el of allEls) {
-            const t = el.innerText?.trim();
-            if (t === 'Fast' || t === 'Planning') { state.mode = t; break; }
-        }
+        // 定義禁區：編輯器、終端機、輸出視窗、通知區 (避免抓到 log 或代碼)
+        const isForbidden = (el) => {
+            return el.closest('.monaco-editor, .view-lines, .terminal-container, .part.panel, .notifications-toasts');
+        };
 
-        // 2. 用量偵測 (精確提取 AI 資源比例，排除 Git/編輯器狀態)
-        const usageNode = allEls.find(el => {
-            if (el.children.length > 0) return false; // 只找最底層的文字節點
-            const t = el.innerText || "";
-            return (t.includes('GP:') || t.includes('GF:') || t.includes('Claude:')) && t.includes('%');
-        });
-        
-        if (usageNode) {
-            state.usage = usageNode.innerText.trim();
-        } else {
-            // 備援方案：從大容器中用正則摳出目標
-            const bigNode = allEls.find(el => (el.innerText || "").includes('GP:') && (el.className.includes('statusbar') || el.closest('[class*="statusbar"]')));
-            if (bigNode) {
-                const match = bigNode.innerText.match(/(GP|GF|Claude|GPT):\s*\d+%.*?(?=\s{2,}|$|\s[A-Z][a-z]+:)/g);
-                if (match) state.usage = match.join(' | ');
+        // 1. 精確定位：模型名稱與模式切換按鈕
+        const toolbar = document.querySelector('.flex.items-center.gap-0-5, [class*="items-center"][class*="gap-0.5"]');
+        if (toolbar) {
+            const allItems = Array.from(toolbar.querySelectorAll('span, div')).filter(el => {
+                return el.children.length === 0 && !isForbidden(el);
+            });
+            
+            // 模式 (Fast/Planning)
+            const modeNode = allItems.find(el => {
+                const t = (el.innerText || "").trim();
+                return t === 'Fast' || t === 'Planning';
+            });
+            if (modeNode) state.mode = modeNode.innerText.trim();
+            
+            // 模型 (長度優先，且不得超過 50 字)
+            const modelCandidates = allItems.filter(el => {
+                const t = (el.innerText || "").trim();
+                return t.length < 50 && ["Gemini", "Claude", "GPT", "o1", "Sonnet"].some(k => t.includes(k)) && !t.includes('%');
+            });
+            if (modelCandidates.length > 0) {
+                const sorted = modelCandidates.sort((a, b) => b.innerText.trim().length - a.innerText.trim().length);
+                state.model = sorted[0].innerText.trim();
             }
         }
 
-        // 3. 模型偵測
-        const modelKeywords = ["Gemini", "Claude", "GPT", "o1", "Sonnet", "Opus"];
-        const candidates = allEls.filter(el => {
-            if (el.children.length > 0) return false;
-            const t = el.innerText?.trim() || "";
-            if (t.length < 3 || t.length > 40) return false;
-            return modelKeywords.some(k => t.includes(k)) && !t.includes('|') && !t.includes('%');
-        });
+        // 2. 狀態列偵測 (用量)
+        const statusItems = Array.from(document.querySelectorAll('.part.statusbar .statusbar-item'));
+        if (statusItems.length > 0) {
+            const usageItem = statusItems.find(el => {
+                if (isForbidden(el)) return false;
+                const t = (el.innerText || "").trim();
+                return t.length < 100 && (t.includes('GP:') || t.includes('GF:') || t.includes('Claude:')) && t.includes('%');
+            });
+            if (usageItem) state.usage = usageItem.innerText.trim();
+        }
 
-        const activeModel = candidates.find(el => {
-            const style = window.getComputedStyle(el);
-            const parentStyle = el.parentElement ? window.getComputedStyle(el.parentElement) : null;
-            return el.className.includes('opacity-100') || 
-                   (parentStyle && (parentStyle.backgroundColor.includes('rgba(128, 128, 128') || parentStyle.backgroundColor.includes('rgba(255, 255, 255'))) ||
-                   el.className.includes('selected') || el.closest('.selected');
-        }) || candidates.find(el => el.className.includes('opacity-70')) || candidates[0];
-
-        if (activeModel) state.model = activeModel.innerText.trim();
-        
+        // 3. 全局備援 (嚴格限制長度與禁區)
         if (state.model === 'Unknown') {
-            const vscode = document.querySelector('[class*="model-selector"] span, [class*="model-name"]');
-            if (vscode) state.model = vscode.innerText.trim();
+            const fallbackModel = Array.from(document.querySelectorAll('span, div')).find(el => {
+                const t = (el.innerText || "").trim();
+                if (el.children.length > 0 || t.length > 50 || isForbidden(el)) return false;
+                return (t.includes('Gemini') || t.includes('Claude')) && !t.includes('|');
+            });
+            if (fallbackModel) state.model = fallbackModel.innerText.trim();
+        }
+        
+        if (state.mode === 'Unknown') {
+            const fallbackMode = Array.from(document.querySelectorAll('.statusbar-item, [aria-label]')).find(el => {
+                const t = (el.innerText || "").trim();
+                const label = el.getAttribute('aria-label') || "";
+                return t === 'Fast' || t === 'Planning' || label.includes('Speed: Fast') || label.includes('Speed: Planning');
+            });
+            if (fallbackMode) {
+                const t = (fallbackMode.innerText || "").trim();
+                if (t === 'Fast' || t === 'Planning') state.mode = t;
+                else state.mode = fallbackMode.getAttribute('aria-label').includes('Fast') ? 'Fast' : 'Planning';
+            }
         }
 
         return state;
@@ -620,11 +635,18 @@ export async function getAppState(cdpList) {
                     if (val.mode !== 'Unknown') bestState.mode = val.mode;
                     if (val.model !== 'Unknown') bestState.model = val.model;
                     if (val.usage) bestState.usage = val.usage;
-                    if (bestState.mode !== 'Unknown' && bestState.model !== 'Unknown') return bestState;
+
+                    // 如果在這個 Context 抓到了關鍵資訊，就判斷是否足夠
+                    if (bestState.mode !== 'Unknown' && bestState.model !== 'Unknown' && bestState.usage) {
+                        return bestState;
+                    }
                 }
             } catch (e) { }
         }
     }
+
+    // 如果完全沒抓到有效資訊，回傳 null 觸發伺服器緩存
+    if (bestState.mode === 'Unknown' && bestState.model === 'Unknown') return null;
     return bestState;
 }
 

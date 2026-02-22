@@ -91,6 +91,8 @@ async function createServer() {
     }
 
     let tickCount = 0;
+    const lastAppStateMap = new Map(); // Port -> State Cache
+
     setInterval(async () => {
         tickCount++;
         const forceUpdate = (tickCount % 5 === 0 || tickCount === 1);
@@ -107,15 +109,30 @@ async function createServer() {
                 const conn = await getOrConnectParams(port).catch(() => null);
                 if (!conn) return;
 
-                const snapshot = await captureSnapshot(conn).catch(err => {
-                    console.error(`[V4-LOOP] Snapshot error for Port ${port}:`, err.message);
-                    return null;
-                });
+                // 同時執行畫面抓取與狀態偵測，不再排隊
+                const [snapshot, newState] = await Promise.all([
+                    captureSnapshot(conn).catch(err => {
+                        console.error(`[V4-LOOP] Snapshot error for Port ${port}:`, err.message);
+                        return null;
+                    }),
+                    syncAppState ? getAppState(conn).catch(() => null) : Promise.resolve(null)
+                ]);
 
                 let appState = null;
-                if (syncAppState) {
-                    appState = await getAppState(conn).catch(() => null);
-                    if (appState) appState.version = APP_VERSION;
+                if (syncAppState && newState) {
+                    newState.version = APP_VERSION;
+                    const oldState = lastAppStateMap.get(port) || { mode: 'Unknown', model: 'Unknown', usage: '', title: '' };
+                    const mergedState = {
+                        mode: (newState.mode !== 'Unknown') ? newState.mode : oldState.mode,
+                        model: (newState.model !== 'Unknown') ? newState.model : oldState.model,
+                        usage: (newState.usage !== '') ? newState.usage : oldState.usage,
+                        title: (newState.title !== '' && newState.title !== 'Unknown') ? newState.title : oldState.title,
+                        version: newState.version
+                    };
+                    lastAppStateMap.set(port, mergedState);
+                    appState = mergedState;
+                } else if (syncAppState && lastAppStateMap.has(port)) {
+                    appState = lastAppStateMap.get(port);
                 }
 
                 portCache.set(port, { snapshot, appState });
@@ -177,7 +194,7 @@ async function createServer() {
                 console.error(`[V4-LOOP] Client send error:`, e.message);
             }
         });
-    }, 1500);
+    }, 1000);
     // Relaxed interval for better stability
 
     wss.on('connection', (ws, req) => {

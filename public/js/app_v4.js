@@ -497,10 +497,25 @@ const openModelSelector = async () => {
             });
             setTimeout(fetchAppState, 1000);
         };
-        if (data.models && data.models.length > 0) showModal('Select Model (Detected)', data.models, handleSelect);
-        else showModal('Select Model (Fallback)', MODELS, handleSelect);
+        const sortModels = (list) => {
+            const getScore = (m) => {
+                const name = (typeof m === 'string' ? m : (m.label || m.value || "")).toLowerCase();
+                if (name.includes('gemini') && name.includes('pro')) return 10;
+                if (name.includes('gemini') && name.includes('flash')) return 20;
+                if (name.includes('claude')) return 30;
+                if (name.includes('gpt')) return 40;
+                return 50;
+            };
+            return [...list].sort((a, b) => getScore(a) - getScore(b));
+        };
+
+        if (data.models && data.models.length > 0) {
+            showModal('Select Model (Detected)', sortModels(data.models), handleSelect);
+        } else {
+            showModal('Select Model (Fallback)', sortModels(MODELS), handleSelect);
+        }
     } catch (e) {
-        showModal('Select Model (Fallback)', MODELS, (val) => {
+        showModal('Select Model (Fallback)', sortModels(MODELS), (val) => {
             fetchWithAuth(`/set-model?port=${currentViewingPort}`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: val })
             });
