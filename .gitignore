@@ -3,6 +3,7 @@ node_modules/
 package-lock.json
 
 # Logs
+logs/
 *.log
 server_log.txt
 npm-debug.log*
@@ -47,8 +48,9 @@ archive/
 *.txt
 *.html
 !public/**/*.html
-scripts/debug_screen.png
-scripts/probe_result.txt
+scripts/*.png
+scripts/*.txt
 playwright-report/
 test-results/
-scripts/perf_baseline.json
+scripts/*.json
+scripts/archive/

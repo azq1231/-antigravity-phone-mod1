@@ -68,41 +68,53 @@ async function fetchAppState() {
     try {
         const res = await fetchWithAuth(`/app-state?port=${currentViewingPort}&_t=${Date.now()}`);
         const data = await res.json();
-        if (data.mode && data.mode !== 'Unknown') modeText.textContent = data.mode;
-        if (data.model && data.model !== 'Unknown') {
-            modelText.textContent = data.usage || data.model;
-            if (activeModelText) activeModelText.textContent = data.model;
-        }
-        instanceText.textContent = `Port ${currentViewingPort}`;
-
-        if (data.title && data.title !== 'Antigravity') {
-            currentDisplayTitle = data.title;
-        } else {
-            currentDisplayTitle = `Port ${currentViewingPort}`;
-        }
-
-        if (mainTitle && mainTitle.textContent !== currentDisplayTitle) {
-            mainTitle.textContent = currentDisplayTitle;
-        }
-
-        if (data.version) {
-            const vMajorMinor = data.version.split('.').slice(0, 2).join('.');
-            const vLabel = `V${vMajorMinor}`;
-            cachedVLabel = vLabel;
-
-            document.title = `${currentDisplayTitle} - Antigravity ${vLabel}`;
-            if (messageInput) messageInput.placeholder = `Message ${vLabel}...`;
-
-            const loadingMsg = document.querySelector('.loading-state p');
-            if (loadingMsg) loadingMsg.textContent = `Waiting for ${vLabel} snapshot...`;
-
-            if (statusText.textContent.includes('Live')) {
-                statusText.textContent = `Live (${vLabel})`;
-            }
-        }
+        updateUIState(data);
     } catch (e) {
         console.error('Sync failed', e);
         if (statusText) statusText.textContent = `❌ Sync Err: ${e.message.substring(0, 15)}`;
+    }
+}
+
+function updateUIState(data) {
+    if (!data) return;
+
+    // 平滑更新模式
+    if (data.mode && data.mode !== 'Unknown' && modeText) {
+        modeText.textContent = data.mode;
+    }
+
+    // 平滑更新型號
+    if (data.model && data.model !== 'Unknown') {
+        if (modelText) modelText.textContent = data.usage || data.model;
+        if (activeModelText) activeModelText.textContent = data.model;
+    }
+
+    // 強制更新 Port
+    if (instanceText) instanceText.textContent = `Port ${currentViewingPort}`;
+
+    // 更新標題
+    if (data.title && data.title !== 'Antigravity' && data.title !== 'Loading...' && data.title !== 'Unknown') {
+        currentDisplayTitle = data.title;
+        if (mainTitle) mainTitle.textContent = currentDisplayTitle;
+    } else if (!currentDisplayTitle || currentDisplayTitle === 'Antigravity' || currentDisplayTitle.startsWith('Port')) {
+        currentDisplayTitle = `Port ${currentViewingPort}`;
+        if (mainTitle) mainTitle.textContent = currentDisplayTitle;
+    }
+
+    if (data.version) {
+        const vMajorMinor = data.version.split('.').slice(0, 2).join('.');
+        const vLabel = `V${vMajorMinor}`;
+        cachedVLabel = vLabel;
+
+        document.title = `${currentDisplayTitle} - Antigravity ${vLabel}`;
+        if (messageInput) messageInput.placeholder = `Message ${vLabel}...`;
+
+        const loadingMsg = document.querySelector('.loading-state p');
+        if (loadingMsg) loadingMsg.textContent = `Waiting for ${vLabel} snapshot...`;
+
+        if (statusText.textContent.includes('Live')) {
+            statusText.textContent = `Live (${vLabel})`;
+        }
     }
 }
 
@@ -141,6 +153,10 @@ function connectWebSocket() {
                         currentDisplayTitle = `Port ${data.port}`;
                         if (mainTitle) mainTitle.textContent = currentDisplayTitle;
                         lastHash = '';
+                    }
+                    if (data.appState) {
+                        console.log('[App] Received AppState update:', data.appState);
+                        updateUIState(data.appState);
                     }
                     renderSnapshot(data);
                 }

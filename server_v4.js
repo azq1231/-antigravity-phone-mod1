@@ -93,76 +93,75 @@ async function createServer() {
     let tickCount = 0;
     setInterval(async () => {
         tickCount++;
-        const forceUpdate = (tickCount % 5 === 0);
+        const forceUpdate = (tickCount % 5 === 0 || tickCount === 1);
+        const syncAppState = (tickCount % 2 === 0 || forceUpdate);
         const clients = Array.from(wss.clients).filter(c => c.readyState === WebSocket.OPEN);
+        if (clients.length === 0) return;
 
-        await Promise.all(clients.map(async (ws) => {
+        // Group ports to avoid redundant scraping
+        const activePorts = [...new Set(clients.map(c => c.viewingPort || 9000))];
+        const portCache = new Map();
+
+        await Promise.all(activePorts.map(async (port) => {
             try {
-                const targetPort = ws.viewingPort || 9000;
+                const conn = await getOrConnectParams(port).catch(() => null);
+                if (!conn) return;
 
-                // Connection attempt
-                const connPromise = getOrConnectParams(targetPort);
-                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Connection timeout')), 2000));
-
-                let conn = await Promise.race([connPromise, timeoutPromise]).catch(err => {
-                    if (forceUpdate) console.warn(`[V4-LOOP] Port ${targetPort} error for ${ws.remoteAddress}: ${err.message}`);
+                const snapshot = await captureSnapshot(conn).catch(err => {
+                    console.error(`[V4-LOOP] Snapshot error for Port ${port}:`, err.message);
                     return null;
                 });
 
-                let snapshot = null;
-                if (conn) {
-                    snapshot = await captureSnapshot(conn).catch(err => {
-                        console.error(`[V4-LOOP] Snapshot error for ${ws.remoteAddress}:`, err.message);
-                        return null;
-                    });
+                let appState = null;
+                if (syncAppState) {
+                    appState = await getAppState(conn).catch(() => null);
+                    if (appState) appState.version = APP_VERSION;
                 }
 
-                let effectiveSnapshot = snapshot;
+                portCache.set(port, { snapshot, appState });
+            } catch (e) {
+                console.error(`[V4-LOOP] Port ${port} processing error:`, e.message);
+            }
+        }));
 
-                // --- STABILIZED SNAPSHOT LOGIC ---
-                // Disable Auto-Hunt to prevent flipping between ports
-                const isMainPortFailing = !effectiveSnapshot || effectiveSnapshot.error || !effectiveSnapshot.html;
-                if (isMainPortFailing) {
-                    ws.failCount = (ws.failCount || 0) + 1;
-                } else {
-                    ws.failCount = 0;
-                }
+        clients.forEach(ws => {
+            try {
+                const targetPort = ws.viewingPort || 9000;
+                const cached = portCache.get(targetPort);
 
-                // Strictly follow manual mode or stick to targetPort
-                const shouldHunt = false; // DISABLED: Force stability
-
-                if (shouldHunt) {
-                    for (const p of PORTS) {
-                        if (p === targetPort) continue;
-                        try {
-                            const tryConn = await getOrConnectParams(p).catch(() => null);
-                            if (!tryConn) continue;
-                            const trySnap = await captureSnapshot(tryConn).catch(() => null);
-                            if (trySnap && trySnap.html && !trySnap.error) {
-                                console.log(`[V4-LOOP] AUTOHUNT: Port ${targetPort} failed for 5s, switching to Port ${p}`);
-                                ws.send(JSON.stringify({ type: 'force_port_switch', port: p }));
-                                ws.viewingPort = p;
-                                ws.failCount = 0; // Reset fail count after successful switch
-                                effectiveSnapshot = trySnap;
-                                break;
-                            }
-                        } catch (e) { }
+                if (!cached || !cached.snapshot) {
+                    if (forceUpdate) {
+                        ws.send(JSON.stringify({
+                            type: 'snapshot_update',
+                            error: 'Waiting for snapshot...',
+                            html: `<div class="error-state">Waiting for Port ${targetPort}...</div>`
+                        }));
                     }
+                    return;
                 }
 
-                if (effectiveSnapshot && !effectiveSnapshot.error && (ws.lastHash !== effectiveSnapshot.hash || forceUpdate)) {
-                    const cssHash = effectiveSnapshot.css ? effectiveSnapshot.css.length : 0; // Simple length as proxy or full hash
+                const { snapshot, appState } = cached;
+
+                if (snapshot.error) {
+                    if (forceUpdate) ws.send(JSON.stringify({ type: 'snapshot_update', error: snapshot.error, html: `<div class="error-state">${snapshot.error}</div>` }));
+                    return;
+                }
+
+                if (ws.lastHash !== snapshot.hash || forceUpdate || appState) {
+                    const cssHash = snapshot.css ? snapshot.css.length : 0;
                     const cssChanged = ws.lastCssHash !== cssHash;
+
+                    if (appState && syncAppState && appState.model !== 'Unknown') {
+                        console.log(`[V4-LOOP] UI Sync (Port ${targetPort}): Mode=${appState.mode}, Model=${appState.model}`);
+                    }
 
                     const message = {
                         type: 'snapshot_update',
-                        port: ws.viewingPort,
-                        isAutoSwitched: false,
-                        debug_source: effectiveSnapshot.targetTitle || 'unknown',
-                        ...effectiveSnapshot
+                        port: targetPort,
+                        appState: appState,
+                        ...snapshot
                     };
 
-                    // Optimization: Only send CSS if it changed
                     if (!cssChanged && !forceUpdate) {
                         delete message.css;
                         message.cssType = 'cached';
@@ -172,16 +171,14 @@ async function createServer() {
                     }
 
                     ws.send(JSON.stringify(message));
-                    ws.lastHash = effectiveSnapshot.hash;
-                } else if (effectiveSnapshot?.error && forceUpdate) {
-                    // console.warn(`[V4-LOOP] SYNC ERROR for ${ws.remoteAddress}: ${effectiveSnapshot.error}`);
-                    ws.send(JSON.stringify({ type: 'snapshot_update', error: effectiveSnapshot.error, html: `<div class="error-state">${effectiveSnapshot.error}</div>` }));
-                } else if (!effectiveSnapshot && forceUpdate) {
-                    ws.send(JSON.stringify({ type: 'snapshot_update', error: 'No snapshot available', html: '<div class="error-state">Waiting for Antigravity... (Port ' + ws.viewingPort + ')</div>' }));
+                    ws.lastHash = snapshot.hash;
                 }
-            } catch (e) { console.error(`[V4-LOOP] Error:`, e.message); }
-        }));
-    }, 1500); // Relaxed interval for better stability
+            } catch (e) {
+                console.error(`[V4-LOOP] Client send error:`, e.message);
+            }
+        });
+    }, 1500);
+    // Relaxed interval for better stability
 
     wss.on('connection', (ws, req) => {
         console.log('[V4-WS] NEW CONNECTION EVENT');

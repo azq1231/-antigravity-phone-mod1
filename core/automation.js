@@ -546,67 +546,86 @@ if (btn && btn.offsetParent !== null) {
 }
 
 export async function getAppState(cdpList) {
+    let bestState = { mode: 'Unknown', model: 'Unknown', usage: '', title: '' };
+
     const EXP = `(async () => {
     try {
-        const state = { mode: 'Unknown', model: 'Unknown', usage: '', title: '' };
-        
-        // 抓取工作區名稱 (e.g., "yian-v1 - Antigravity" -> "yian-v1")
-        let docTitle = document.title || "";
-        let rawTitle = docTitle.split(' - ')[0].trim();
-        state.title = rawTitle.length > 18 ? rawTitle.substring(0, 15) + '...' : rawTitle;
-
+        const state = { mode: 'Unknown', model: 'Unknown', usage: '', title: document.title || "" };
         const allEls = Array.from(document.querySelectorAll('*'));
+        
+        // 1. 模式偵測
         for (const el of allEls) {
-            if (el.innerText === 'Fast' || el.innerText === 'Planning') { state.mode = el.innerText; break; }
+            const t = el.innerText?.trim();
+            if (t === 'Fast' || t === 'Planning') { state.mode = t; break; }
         }
-        const textNodes = allEls.filter(el => el.children.length === 0 && el.innerText && el.innerText.length < 80);
 
-        // 1. 抓取用量資訊 (包含 | 或 %)
-        const usageNode = textNodes.find(el => (el.innerText.includes('|') || el.innerText.includes('%')) && (el.closest('[class*="statusbar"]') || el.closest('[class*="status-bar"]')));
-        if (usageNode) state.usage = usageNode.innerText.trim();
+        // 2. 用量偵測 (精確提取 AI 資源比例，排除 Git/編輯器狀態)
+        const usageNode = allEls.find(el => {
+            if (el.children.length > 0) return false; // 只找最底層的文字節點
+            const t = el.innerText || "";
+            return (t.includes('GP:') || t.includes('GF:') || t.includes('Claude:')) && t.includes('%');
+        });
+        
+        if (usageNode) {
+            state.usage = usageNode.innerText.trim();
+        } else {
+            // 備援方案：從大容器中用正則摳出目標
+            const bigNode = allEls.find(el => (el.innerText || "").includes('GP:') && (el.className.includes('statusbar') || el.closest('[class*="statusbar"]')));
+            if (bigNode) {
+                const match = bigNode.innerText.match(/(GP|GF|Claude|GPT):\s*\d+%.*?(?=\s{2,}|$|\s[A-Z][a-z]+:)/g);
+                if (match) state.usage = match.join(' | ');
+            }
+        }
 
-        // 2. 抓取潛在型號標籤 (過濾掉用量與雜訊)
-        const candidates = textNodes.filter(el => {
-            const t = el.innerText.trim();
-            // 基本型號關鍵字
-            const hasModel = ["Gemini", "Claude", "GPT", "Grok", "o1", "Sonnet", "Opus"].some(k => t.includes(k));
-            if (!hasModel) return false;
-            
-            // 過濾用量資訊
-            if (t.includes('|') || t.includes('%')) return false;
-            
-            // --- 強化過濾器：過濾掉看起來像標題或對話內容的長句子 ---
-            // 正常型號名稱通常不會超過 35 個字
-            if (t.length > 35) return false;
-            // 過濾掉包含常見「非型號」動詞或雜訊詞的文本
-            const noiseWords = ["Clarifying", "version", "chat", "history", "message", "how to", "what is", "about"];
-            if (noiseWords.some(w => t.toLowerCase().includes(w))) return false;
-            
-            return true;
+        // 3. 模型偵測
+        const modelKeywords = ["Gemini", "Claude", "GPT", "o1", "Sonnet", "Opus"];
+        const candidates = allEls.filter(el => {
+            if (el.children.length > 0) return false;
+            const t = el.innerText?.trim() || "";
+            if (t.length < 3 || t.length > 40) return false;
+            return modelKeywords.some(k => t.includes(k)) && !t.includes('|') && !t.includes('%');
         });
 
-        const bestMatch = candidates.find(el => el.closest('button') && (el.innerText.includes('Gemini') || el.innerText.includes('Claude') || el.innerText.includes('GPT'))) ||
-            candidates.find(el => el.closest('button')) ||
-            candidates.find(el => el.className.includes('opacity-70') || el.className.includes('ellipsis')) ||
-            candidates[0];
+        const activeModel = candidates.find(el => {
+            const style = window.getComputedStyle(el);
+            const parentStyle = el.parentElement ? window.getComputedStyle(el.parentElement) : null;
+            return el.className.includes('opacity-100') || 
+                   (parentStyle && (parentStyle.backgroundColor.includes('rgba(128, 128, 128') || parentStyle.backgroundColor.includes('rgba(255, 255, 255'))) ||
+                   el.className.includes('selected') || el.closest('.selected');
+        }) || candidates.find(el => el.className.includes('opacity-70')) || candidates[0];
 
-        if (bestMatch) state.model = bestMatch.innerText.trim();
+        if (activeModel) state.model = activeModel.innerText.trim();
+        
+        if (state.model === 'Unknown') {
+            const vscode = document.querySelector('[class*="model-selector"] span, [class*="model-name"]');
+            if (vscode) state.model = vscode.innerText.trim();
+        }
+
         return state;
     } catch (e) { return { error: e.toString() }; }
 })()`;
+
     for (const cdp of cdpList) {
-        const ctxIds = cdp.contexts.length > 0 ? cdp.contexts.map(c => c.id) : [undefined];
+        const ctxIds = (cdp.contexts && cdp.contexts.length > 0) ? cdp.contexts.map(c => c.id) : [undefined];
         for (const ctxId of ctxIds) {
             try {
                 const params = { expression: EXP, returnByValue: true, awaitPromise: true };
                 if (ctxId !== undefined) params.contextId = ctxId;
                 const res = await cdp.call("Runtime.evaluate", params);
                 const val = res.result?.value;
-                if (val && !val.error && (val.mode !== 'Unknown' || val.model !== 'Unknown')) return val;
+                if (val && !val.error) {
+                    if (val.title && val.title.includes(' - ')) bestState.title = val.title.split(' - ')[0].trim();
+                    else if (val.title && !bestState.title) bestState.title = val.title;
+
+                    if (val.mode !== 'Unknown') bestState.mode = val.mode;
+                    if (val.model !== 'Unknown') bestState.model = val.model;
+                    if (val.usage) bestState.usage = val.usage;
+                    if (bestState.mode !== 'Unknown' && bestState.model !== 'Unknown') return bestState;
+                }
             } catch (e) { }
         }
     }
-    return { mode: 'Unknown', model: 'Unknown' };
+    return bestState;
 }
 
 export async function setMode(cdpList, mode) {
