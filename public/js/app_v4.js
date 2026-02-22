@@ -545,20 +545,37 @@ if (historyBtn) {
 }
 
 function renderHistoryModal(items) {
-    modalList.innerHTML = '<div class="modal-title">History</div>';
+    modalList.innerHTML = '<div class="modal-title">History / 歷史對話</div>';
     items.forEach((item, index) => {
         const div = document.createElement('div');
         div.className = `history-item ${item.active ? 'active' : ''}`;
-        div.textContent = item.title || 'Untitled Chat';
+        div.innerHTML = `
+            <div class="history-item-icon">🕒</div>
+            <div class="history-item-title">${item.title || 'Untitled Chat'}</div>
+        `;
         div.onclick = async () => {
             modalOverlay.style.display = 'none';
-            chatContent.innerHTML = `<div class="loading-state"><div class="loading-spinner"></div><p>Loading...</p></div>`;
-            await fetchWithAuth(`/select-chat?port=${currentViewingPort}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index }) });
+            chatContent.innerHTML = `<div class="loading-state"><div class="loading-spinner"></div><p>Loading chat...</p></div>`;
+            await fetchWithAuth(`/select-chat?port=${currentViewingPort}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ index })
+            });
             setTimeout(() => { loadSnapshot(); fetchAppState(); }, 1500);
         };
         modalList.appendChild(div);
     });
+
     modalOverlay.style.display = 'flex';
+
+    // 入場動畫 (Consistent with other modals)
+    const panel = modalOverlay.querySelector('.modal-panel');
+    if (panel) {
+        panel.classList.remove('animate-in');
+        void panel.offsetWidth;
+        panel.classList.add('animate-in');
+        panel.addEventListener('animationend', () => panel.classList.remove('animate-in'), { once: true });
+    }
 }
 
 if (imageInput) {

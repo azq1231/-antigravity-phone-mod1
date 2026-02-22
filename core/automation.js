@@ -973,14 +973,22 @@ export async function startNewChat(cdpList) {
 export async function getChatHistory(cdpList) {
     const EXP = `(async () => {
     try {
+        const skipWords = ['new chat', 'settings', 'home', 'account', 'upgrade', 'help', 'log in', 'sign up', 'clear all'];
         const historyList = document.querySelector('[class*="history-list"], [class*="ConversationList"]');
+        
         if (!historyList) {
-            // Try searching for any sidebar-like container
             const sidebar = document.querySelector('nav, [class*="sidebar"]');
             if (!sidebar) return { error: 'History container not found' };
 
             const possibleItems = Array.from(sidebar.querySelectorAll('a, button, [role="link"]'))
-                .filter(el => el.innerText.length > 5 && el.innerText.length < 100);
+                .filter(el => {
+                    const text = el.innerText.trim().toLowerCase();
+                    return el.offsetParent !== null && 
+                           text.length > 8 && 
+                           text.length < 100 && 
+                           !skipWords.some(w => text.includes(w)) &&
+                           !el.closest('[aria-hidden="true"]');
+                });
 
             if (possibleItems.length > 0) {
                 return { success: true, items: possibleItems.map((el, i) => ({ id: i, title: el.innerText.trim(), active: false })) };
@@ -997,7 +1005,8 @@ export async function getChatHistory(cdpList) {
                     title: (titleEl ? titleEl.innerText : el.innerText).trim().substring(0, 100),
                     active: el.classList.contains('active') || !!el.querySelector('[class*="active"]')
                 };
-            });
+            })
+            .filter(item => !skipWords.some(w => item.title.toLowerCase().includes(w)));
 
         return { success: true, items };
     } catch (err) {
