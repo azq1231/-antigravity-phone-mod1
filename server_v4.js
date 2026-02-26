@@ -11,12 +11,16 @@ import { dirname, join } from 'path';
 import WebSocket from 'ws';
 
 import { activeConnections, getOrConnectParams } from './core/cdp_manager.js';
-import { captureSnapshot, injectScroll } from './core/automation.js';
+import { captureSnapshot, injectScroll, getAppState } from './core/automation.js';
 import { findAllInstances } from './core/cdp_manager.js';
+
 import apiRoutes from './routes/api.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+const packageJson = JSON.parse(fs.readFileSync(join(__dirname, 'package.json'), 'utf8'));
+const APP_VERSION = packageJson.version;
 
 const SERVER_PORT = 3004;
 const PORTS = [9000, 9001, 9002, 9003];

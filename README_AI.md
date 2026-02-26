@@ -3,7 +3,9 @@
 ## 🛠 專案架構
 
 - **核心**: Node server (server_v4.js) 透過 CDP 連接 Antigravity (VS Code)。
+- **啟動**: 建議使用 `ONE_CLICK_START.bat` 一鍵啟動 (包含 Server 與 Tunnel)。
 - **通訊**: 手機端透過 WebSocket (Port 3004) 接收快照與發送指令。
+
 - **機制**: 採用快照 (Snapshot) 擷取方式，將桌面端 UI 轉譯至手機端。
 
 ## ⚠️ 開發重要規範 (Critical)

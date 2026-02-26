@@ -304,80 +304,51 @@ return { success: true, newScrollTop: target.scrollTop, scrollHeight: target.scr
 }
 
 export async function injectMessage(cdpList, text, force = false) {
-    const safeText = JSON.stringify(text);
-    const EXPRESSION = `(async () => {
+    const EXPRESSION_CHECK = `(async () => {
     const cancel = document.querySelector('button[data-tooltip-id="input-send-button-cancel-tooltip"]');
     const stopBtn = document.querySelector('button svg.lucide-square, svg.lucide-circle-stop')?.closest('button');
     const busyEl = cancel || stopBtn;
-
     if (!${force} && busyEl && busyEl.offsetParent !== null && busyEl.offsetHeight > 0) return { ok: false, reason: "busy" };
 
-const editors = [...document.querySelectorAll('[data-lexical-editor="true"][contenteditable="true"]')].filter(el => el.offsetParent !== null);
-const editor = editors.at(-1);
-if (!editor) return { ok: false, error: "editor_not_found" };
+    const editors = [...document.querySelectorAll('[data-lexical-editor="true"][contenteditable="true"]')].filter(el => el.offsetParent !== null);
+    const editor = editors.at(-1);
+    if (!editor) return { ok: false, error: "editor_not_found" };
 
-// 1. Idempotency Check & Clear
-const injectId = "inj_" + Date.now();
-if (editor.getAttribute('data-last-inject') === ${safeText} && Date.now() - parseInt(editor.getAttribute('data-last-inject-time') || '0') < 1000) {
-    return { ok: true, method: "idempotent_skip" };
-}
-editor.setAttribute('data-last-inject', ${safeText});
-editor.setAttribute('data-last-inject-time', Date.now().toString());
-
-editor.focus();
-// Most robust clear for Lexical
-try {
-    const sel = window.getSelection();
-    sel.selectAllChildren(editor);
-    document.execCommand("delete", false, null);
-} catch (e) {}
-
-if (editor.textContent.length > 0) {
-    editor.innerHTML = '<p dir="ltr"><br></p>'; // Force Lexical empty state
-    editor.dispatchEvent(new InputEvent("input", { bubbles: true }));
-}
-
-// 2. Insert Content
-try { 
-    document.execCommand("insertText", false, ${safeText}); 
-} catch (e) {
-    editor.textContent = ${safeText};
-    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: ${safeText} }));
-}
-
-// Optimization: Brief wait for Lexical to sync DOM
-await new Promise(r => setTimeout(r, 60));
-
-// 3. Find and Trigger Send
-const allButtons = Array.from(document.querySelectorAll('button, [role="button"], a.button, [title*="Send"], [aria-label*="Send"]'));
-const isActuallySend = (b) => {
-    const label = (b.innerText + ' ' + (b.getAttribute('aria-label') || '') + ' ' + (b.title || '') + ' ' + (b.className || '')).toLowerCase();
-    if (label.includes('continue') || label.includes('繼續') || label.includes('stop') || label.includes('停止') || label.includes('cancel')) return false;
-    return label.includes('send') || label.includes('submit') || label.includes('發送') || label.includes('送出') || 
-           b.querySelector('svg.lucide-arrow-right, .lucide-send, svg[class*="send"]');
-};
-
-const submit = allButtons.find(isActuallySend);
-
-if (submit && submit.offsetParent !== null) {
-    submit.click();
-    // Optimistic return
-    return { ok: true, method: "click_send" };
-} else {
-    // Enter key fallback
-    editor.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter", code: "Enter", keyCode: 13, which: 13 }));
-    return { ok: true, method: "enter_fallback" };
-}
-    }) ()`;
+    // Nuclear Clear Check
+    editor.focus();
+    try {
+        editor.innerHTML = '<p dir="ltr"><br></p>'; 
+        document.execCommand("selectAll", false, null);
+        document.execCommand("delete", false, null);
+    } catch(e) {}
+    
+    return { ok: true, ready: true };
+})()`;
 
     for (const cdp of cdpList) {
         const ctxIds = cdp.contexts.length > 0 ? cdp.contexts.map(c => c.id) : [undefined];
         for (const ctxId of ctxIds) {
             try {
-                const params = { expression: EXPRESSION, returnByValue: true, awaitPromise: true };
+                // 1. JS 階段：檢查狀態、對焦並清空輸入框
+                const params = { expression: EXPRESSION_CHECK, returnByValue: true, awaitPromise: true };
                 if (ctxId !== undefined) params.contextId = ctxId;
                 const res = await cdp.call("Runtime.evaluate", params);
-                if (res.result?.value?.ok || res.result?.value?.reason === 'busy') return res.result.value;
+
+                if (res.result?.value?.reason === 'busy') return res.result.value;
+                if (res.result?.value?.ready) {
+
+                    // 2. CDP 底層階段：發送純文字 (徹底防止重複與 React 干擾)
+                    await cdp.call('Input.insertText', { text: text });
+
+                    await new Promise(r => setTimeout(r, 150));
+
+                    // 3. CDP 底層階段：發送實體 Enter (無效化所有防護盾的終極點擊)
+                    await cdp.call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
+                    await new Promise(r => setTimeout(r, 20));
+                    await cdp.call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
+
+                    return { ok: true, method: "cdp_input_enter" };
+                }
             } catch (e) { }
         }
     }
