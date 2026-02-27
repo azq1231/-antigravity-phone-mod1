@@ -523,7 +523,7 @@ export async function getDetailedUsage(cdpList) {
     const SCRIPT = `(async () => {
         const label = Array.from(document.querySelectorAll('*')).find(el => {
             const t = (el.innerText || "").trim();
-            return t.includes('%') && t.length < 15 && el.offsetParent !== null;
+            return t.includes('%') && t.length < 100 && el.offsetParent !== null;
         });
         if (!label) return { error: 'Label not found' };
         label.click();
@@ -573,7 +573,7 @@ export async function openUsageDialog(cdpList) {
     const SCRIPT = `(() => {
         const label = Array.from(document.querySelectorAll('*')).find(el => {
             const t = (el.innerText || "").trim();
-            return t.includes('%') && t.length < 15 && el.offsetParent !== null;
+            return t.includes('%') && t.length < 100 && el.offsetParent !== null;
         });
         if (label) {
             label.click();

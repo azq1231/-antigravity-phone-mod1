@@ -41,9 +41,13 @@ const modalOverlay = document.getElementById('modalOverlay');
 const modalList = document.getElementById('modalList');
 const mainTitle = document.getElementById('mainTitle');
 
+let isFetchingUsage = false;
+
 const openUsage = async () => {
+    if (isFetchingUsage) return;
+    isFetchingUsage = true;
     try {
-        const res = await fetchWithAuth(`/usage-details?port=${currentViewingPort}`);
+        const res = await fetchWithAuth(`/usage-details?port=${currentViewingPort}&_t=${Date.now()}`);
         const result = await res.json();
 
         modalList.innerHTML = '';
@@ -86,6 +90,8 @@ const openUsage = async () => {
     } catch (e) {
         modalList.innerHTML = '<div class="modal-title">錯誤</div><div class="modal-option" style="color: #e53e3e;">無法連線伺服器。</div>';
         modalOverlay.style.display = 'flex';
+    } finally {
+        isFetchingUsage = false;
     }
 };
 

@@ -102,10 +102,15 @@ router.get('/available-models', async (req, res) => {
 
 router.get('/usage-details', async (req, res) => {
     try {
+        console.log(`[API] /usage-details called by: ${req.headers['user-agent']} at ${new Date().toISOString()}`);
         const conn = await getOrConnectParams(parseInt(req.query.port) || 9000);
         const result = await getDetailedUsage(conn);
+        console.log(`[API] /usage-details result:`, result);
         res.json(result);
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) {
+        console.error(`[API] /usage-details error:`, e.message);
+        res.status(500).json({ error: e.message });
+    }
 });
 
 router.post('/open-usage', async (req, res) => {
