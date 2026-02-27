@@ -76,8 +76,19 @@ async function createServer() {
         });
     });
 
-    app.get('/', (req, res) => res.sendFile(join(__dirname, 'public', 'index_v4.html')));
-    app.use(express.static(join(__dirname, 'public')));
+    app.get('/', (req, res) => {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+        res.sendFile(join(__dirname, 'public', 'index_v4.html'));
+    });
+    app.use(express.static(join(__dirname, 'public'), {
+        setHeaders: (res, path) => {
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
+        }
+    }));
 
     // Map VS Code resources (icons, etc.) to virtual endpoint
     // The regex in automation.js replaces up to "Program Files", so the root here should be "Program Files"
@@ -129,7 +140,7 @@ async function createServer() {
                     const mergedState = {
                         mode: (newState.mode !== 'Unknown') ? newState.mode : oldState.mode,
                         model: (newState.model !== 'Unknown') ? newState.model : oldState.model,
-                        usage: (newState.usage !== '') ? newState.usage : oldState.usage,
+                        usage: (newState.usageText || newState.usage || (newState.model !== 'Unknown' ? newState.model : oldState.model)),
                         title: (newState.title !== '' && newState.title !== 'Unknown') ? newState.title : oldState.title,
                         version: newState.version
                     };

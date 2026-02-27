@@ -21,7 +21,6 @@ export async function captureSnapshot(cdpList) {
             // 標記匹配品質：exact > loose > fallback
             const matchQuality = exactTarget ? 'exact' : (looseTarget ? 'loose' : 'fallback');
 
-            // If we found a target, use it. Otherwise, use body but indicate it's a fallback
             const root = target || body;
             
             // 2. Capture CSS (Optimized V4.2)
@@ -516,6 +515,80 @@ if (btn && btn.offsetParent !== null) {
     return { ok: false, error: "no_editor_found_all_contexts", results: results };
 }
 
+export async function getDetailedUsage(cdpList) {
+    const SCRIPT = `(async () => {
+        const label = Array.from(document.querySelectorAll('*')).find(el => {
+            const t = (el.innerText || "").trim();
+            return t.includes('%') && t.length < 15 && el.offsetParent !== null;
+        });
+        if (!label) return { error: 'Label not found' };
+        label.click();
+        await new Promise(r => setTimeout(r, 1000));
+        
+        const dialog = Array.from(document.querySelectorAll('[role="dialog"], [class*="dialog"], [class*="overlay"]'))
+                            .find(el => el.innerText?.includes('重置倒計時') && el.offsetParent !== null);
+        
+        let textBlocks = [];
+        if (dialog) {
+            textBlocks = dialog.innerText.split('\\n').map(l => l.trim()).filter(l => l.length > 0);
+        } else {
+            // Fallback: collect all short visible texts
+            textBlocks = Array.from(document.querySelectorAll('*'))
+                            .filter(el => el.offsetParent !== null && el.children.length === 0 && el.innerText.trim().length > 0)
+                            .map(el => el.innerText.trim());
+        }
+        
+        const models = ["G3-Pro", "G3 Flash", "Claude"];
+        const results = {};
+        models.forEach(m => {
+            const idx = textBlocks.findIndex(row => row.includes(m));
+            if (idx !== -1) {
+                results[m] = { percent: "N/A", countdown: "N/A", eta: "N/A" };
+                for (let j = idx; j < idx + 15 && j < textBlocks.length; j++) {
+                    if (textBlocks[j].includes('%') && results[m].percent === "N/A") results[m].percent = textBlocks[j];
+                    if (textBlocks[j] === "重置倒計時") results[m].countdown = textBlocks[j+1];
+                    if (textBlocks[j] === "重置時間") results[m].eta = textBlocks[j+1];
+                }
+            }
+        });
+        return { success: true, data: results };
+    })()`;
+
+    for (const cdp of cdpList) {
+        for (const ctx of cdp.contexts) {
+            try {
+                const res = await cdp.call("Runtime.evaluate", { expression: SCRIPT, returnByValue: true, awaitPromise: true, contextId: ctx.id });
+                if (res.result?.value?.success) return res.result.value;
+            } catch (e) { }
+        }
+    }
+    return { error: 'Failed' };
+}
+
+export async function openUsageDialog(cdpList) {
+    const SCRIPT = `(() => {
+        const label = Array.from(document.querySelectorAll('*')).find(el => {
+            const t = (el.innerText || "").trim();
+            return t.includes('%') && t.length < 15 && el.offsetParent !== null;
+        });
+        if (label) {
+            label.click();
+            return { success: true };
+        }
+        return { error: 'Usage label not found' };
+    })()`;
+
+    for (const cdp of cdpList) {
+        for (const ctx of cdp.contexts) {
+            try {
+                const res = await cdp.call("Runtime.evaluate", { expression: SCRIPT, returnByValue: true, contextId: ctx.id });
+                if (res.result?.value?.success) return res.result.value;
+            } catch (e) { }
+        }
+    }
+    return { error: 'Failed' };
+}
+
 export async function getAppState(cdpList) {
     let bestState = { mode: 'Unknown', model: 'Unknown', usage: '', title: '' };
 
@@ -586,6 +659,13 @@ export async function getAppState(cdpList) {
                 else state.mode = fallbackMode.getAttribute('aria-label').includes('Fast') ? 'Fast' : 'Planning';
             }
         }
+
+        // 4. 定位用量標籤 (單獨抓取文字，供 UI 點擊使用)
+        const usageLabel = Array.from(document.querySelectorAll('*')).find(el => {
+            const t = (el.innerText || "").trim();
+            return t.includes('%') && t.length < 10 && el.offsetParent !== null;
+        });
+        if (usageLabel) state.usageText = usageLabel.innerText.trim();
 
         return state;
     } catch (e) { return { error: e.toString() }; }

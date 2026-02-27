@@ -3,7 +3,7 @@ import fs from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { activeConnections, getOrConnectParams, findAllInstances } from '../core/cdp_manager.js';
-import { captureSnapshot, injectMessage, getAppState, setMode, setModel, discoverModels, injectScroll, injectImage, startNewChat, getChatHistory, selectChat } from '../core/automation.js';
+import { captureSnapshot, injectMessage, getAppState, setMode, setModel, discoverModels, injectScroll, injectImage, startNewChat, getChatHistory, selectChat, openUsageDialog, getDetailedUsage } from '../core/automation.js';
 import { spawnInstance, killInstance } from '../core/instance_manager.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -99,6 +99,22 @@ router.get('/available-models', async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+
+router.get('/usage-details', async (req, res) => {
+    try {
+        const conn = await getOrConnectParams(parseInt(req.query.port) || 9000);
+        const result = await getDetailedUsage(conn);
+        res.json(result);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/open-usage', async (req, res) => {
+    try {
+        const conn = await getOrConnectParams(parseInt(req.query.port) || 9000);
+        const result = await openUsageDialog(conn);
+        res.json(result);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 router.post('/new-chat', async (req, res) => {
     try {

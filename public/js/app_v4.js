@@ -41,6 +41,54 @@ const modalOverlay = document.getElementById('modalOverlay');
 const modalList = document.getElementById('modalList');
 const mainTitle = document.getElementById('mainTitle');
 
+const openUsage = async () => {
+    try {
+        const res = await fetchWithAuth(`/usage-details?port=${currentViewingPort}`);
+        const result = await res.json();
+
+        modalList.innerHTML = '';
+        const titleEl = document.createElement('div');
+        titleEl.textContent = '配額恢復時間 (Quota)';
+        titleEl.className = 'modal-title';
+        modalList.appendChild(titleEl);
+
+        if (result.success && result.data) {
+            for (const [model, info] of Object.entries(result.data)) {
+                const item = document.createElement('div');
+                item.className = 'modal-option';
+                item.style.cursor = 'default';
+                item.style.padding = '12px 16px';
+
+                item.innerHTML = `
+                    <div style="font-weight: bold; margin-bottom: 4px; color: #fff;">${model}</div>
+                    <div style="font-size: 13px; color: #a0aec0;">目前的用量: <span style="color: #48bb78; font-weight: bold;">${info.percent}</span></div>
+                    <div style="font-size: 13px; color: #a0aec0;">重置倒計時: <span style="color: #fc8181; font-weight: bold;">${info.countdown}</span></div>
+                    <div style="font-size: 13px; color: #a0aec0;">重置時間: <span style="color: #63b3ed; font-weight: bold;">${info.eta || "N/A"}</span></div>
+                `;
+                modalList.appendChild(item);
+            }
+        } else {
+            const err = document.createElement('div');
+            err.className = 'modal-option';
+            err.textContent = '目前無法獲取配額數據。';
+            err.style.color = '#e53e3e';
+            modalList.appendChild(err);
+        }
+
+        modalOverlay.style.display = 'flex';
+        const panel = modalOverlay.querySelector('.modal-panel');
+        if (panel) {
+            panel.classList.remove('animate-in');
+            void panel.offsetWidth;
+            panel.classList.add('animate-in');
+            panel.addEventListener('animationend', () => panel.classList.remove('animate-in'), { once: true });
+        }
+    } catch (e) {
+        modalList.innerHTML = '<div class="modal-title">錯誤</div><div class="modal-option" style="color: #e53e3e;">無法連線伺服器。</div>';
+        modalOverlay.style.display = 'flex';
+    }
+};
+
 // State
 let ws = null;
 let currentViewingPort = parseInt(localStorage.getItem('lastViewingPort')) || 9000;
@@ -628,6 +676,7 @@ if (mainTitle) {
     window.titleObserver.observe(mainTitle, { childList: true, characterData: true, subtree: true });
 }
 
+window.openUsage = openUsage;
 window.openSlotManager = openSlotManager;
 window.openModelSelector = openModelSelector;
 window.openModeSelector = openModeSelector;
