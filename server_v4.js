@@ -137,10 +137,18 @@ async function createServer() {
                 if (syncAppState && newState) {
                     newState.version = APP_VERSION;
                     const oldState = lastAppStateMap.get(port) || { mode: 'Unknown', model: 'Unknown', usage: '', title: '' };
+                    let parsedUsage = (newState.usageText || newState.usage || (newState.model !== 'Unknown' ? newState.model : oldState.model));
+                    if (parsedUsage && parsedUsage.includes('|')) {
+                        parsedUsage = parsedUsage.split('|')[0].trim(); // Get only the first quota to avoid UI breakage
+                    }
+                    if (parsedUsage && parsedUsage.length > 25) {
+                        parsedUsage = parsedUsage.substring(0, 25) + '...';
+                    }
+
                     const mergedState = {
                         mode: (newState.mode !== 'Unknown') ? newState.mode : oldState.mode,
                         model: (newState.model !== 'Unknown') ? newState.model : oldState.model,
-                        usage: (newState.usageText || newState.usage || (newState.model !== 'Unknown' ? newState.model : oldState.model)),
+                        usage: parsedUsage,
                         title: (newState.title !== '' && newState.title !== 'Unknown') ? newState.title : oldState.title,
                         version: newState.version
                     };

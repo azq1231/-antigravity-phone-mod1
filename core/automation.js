@@ -172,7 +172,11 @@ clone.querySelectorAll('*').forEach(el => {
             val.includes('Program%20Files');
 
         if (isBad) {
-            el.setAttribute(attr.name, cleanText(val));
+            let cleaned = cleanText(val);
+            if (el.tagName === 'IMG' && attr.name === 'src' && cleaned.includes('#')) {
+                cleaned = blankGif;
+            }
+            el.setAttribute(attr.name, cleaned);
         }
     }
     if (el.tagName === 'STYLE') el.textContent = cleanText(el.textContent);
@@ -648,7 +652,9 @@ export async function getAppState(cdpList) {
         }
         
         if (state.mode === 'Unknown') {
-            const fallbackMode = Array.from(document.querySelectorAll('.statusbar-item, [aria-label]')).find(el => {
+            const fallbackMode = Array.from(document.querySelectorAll('span, div, button, .statusbar-item, [aria-label]')).find(el => {
+                if (isForbidden(el)) return false;
+                if (el.children.length > 0 && !el.getAttribute('aria-label')) return false;
                 const t = (el.innerText || "").trim();
                 const label = el.getAttribute('aria-label') || "";
                 return t === 'Fast' || t === 'Planning' || label.includes('Speed: Fast') || label.includes('Speed: Planning');
@@ -656,7 +662,7 @@ export async function getAppState(cdpList) {
             if (fallbackMode) {
                 const t = (fallbackMode.innerText || "").trim();
                 if (t === 'Fast' || t === 'Planning') state.mode = t;
-                else state.mode = fallbackMode.getAttribute('aria-label').includes('Fast') ? 'Fast' : 'Planning';
+                else if (fallbackMode.getAttribute('aria-label')) state.mode = fallbackMode.getAttribute('aria-label').includes('Fast') ? 'Fast' : 'Planning';
             }
         }
 
