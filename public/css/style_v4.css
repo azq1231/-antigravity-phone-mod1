@@ -808,10 +808,28 @@ textarea::-webkit-scrollbar {
     border-color: rgba(255, 255, 255, 0.1) !important;
 }
 
+/* Fix Truncated View / Hidden Virtual Scroll Contents */
+#chatContent div,
+#chatContent section,
+#chatContent article,
+#chatContent main,
+#chatContent [role="main"],
+#chatContent ul,
+#chatContent li,
+#ag-snapshot-content div,
+#ag-snapshot-content section {
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
+    position: static !important;
+    transform: none !important;
+}
+
 /* Ensure code blocks are still readable */
 #chatContent pre,
 #chatContent code {
     background-color: rgba(255, 255, 255, 0.05) !important;
     border-radius: 4px;
     padding: 2px 4px;
+    position: relative !important;
 }

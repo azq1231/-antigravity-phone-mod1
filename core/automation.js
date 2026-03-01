@@ -521,40 +521,91 @@ if (btn && btn.offsetParent !== null) {
 
 export async function getDetailedUsage(cdpList) {
     const SCRIPT = `(async () => {
-        const label = Array.from(document.querySelectorAll('*')).find(el => {
+        const labels = Array.from(document.querySelectorAll('.statusbar-item-label, .statusbar-item a, .statusbar-item span, .statusbar-item')).filter(el => {
             const t = (el.innerText || "").trim();
-            return t.includes('%') && t.length < 100 && el.offsetParent !== null;
+            return t.includes('%') && el.offsetParent !== null;
         });
-        if (!label) return { error: 'Label not found' };
-        label.click();
-        await new Promise(r => setTimeout(r, 1000));
         
-        const dialog = Array.from(document.querySelectorAll('[role="dialog"], [class*="dialog"], [class*="overlay"]'))
-                            .find(el => el.innerText?.includes('重置倒計時') && el.offsetParent !== null);
+        let targetLabel = null;
+        let ariaLabel = "";
         
-        let textBlocks = [];
-        if (dialog) {
-            textBlocks = dialog.innerText.split('\\n').map(l => l.trim()).filter(l => l.length > 0);
-        } else {
-            // Fallback: collect all short visible texts
-            textBlocks = Array.from(document.querySelectorAll('*'))
-                            .filter(el => el.offsetParent !== null && el.children.length === 0 && el.innerText.trim().length > 0)
-                            .map(el => el.innerText.trim());
-        }
-        
-        const models = ["G3-Pro", "G3 Flash", "Claude"];
-        const results = {};
-        models.forEach(m => {
-            const idx = textBlocks.findIndex(row => row.includes(m));
-            if (idx !== -1) {
-                results[m] = { percent: "N/A", countdown: "N/A", eta: "N/A" };
-                for (let j = idx; j < idx + 15 && j < textBlocks.length; j++) {
-                    if (textBlocks[j].includes('%') && results[m].percent === "N/A") results[m].percent = textBlocks[j];
-                    if (textBlocks[j] === "重置倒計時") results[m].countdown = textBlocks[j+1];
-                    if (textBlocks[j] === "重置時間") results[m].eta = textBlocks[j+1];
+        for (const l of labels) {
+            let el = l;
+            while(el && !el.classList?.contains('statusbar-item')) {
+                if (el.parentElement) el = el.parentElement;
+                else break;
+            }
+            if (el) {
+                const aria = el.getAttribute('aria-label') || el.querySelector('[aria-label]')?.getAttribute('aria-label') || "";
+                if (aria.includes('配額') || aria.includes('100%') || aria.includes('%')) {
+                    targetLabel = l;
+                    ariaLabel = aria;
+                    break;
                 }
             }
+        }
+        
+        if (!ariaLabel) {
+            for(const l of labels) {
+               const aria = l.getAttribute('aria-label') || l.title || "";
+               if (aria.includes('%')) { ariaLabel = aria; break; }
+            }
+        }
+        
+        if (!targetLabel && !ariaLabel) return { error: 'Label not found' };
+        
+        const results = {};
+        
+        // Use RegEx to parse markdown table from AriaLabel
+        // Pattern: | **Model Name** | bar | 60.00% -> 2h 47m (23:50) |
+        const regex = /[|] .*?[*][*]([^*]+)[*][*] [|] .*? [|] ([0-9.]+)%[^0-9]*?([0-9hms ]+)[(]([^)]+)[)] [|]/g;
+        let match;
+        let found = false;
+        
+        while ((match = regex.exec(ariaLabel)) !== null) {
+            found = true;
+            results[match[1].trim()] = {
+                percent: match[2].trim() + "%",
+                countdown: match[3].trim(),
+                eta: match[4].trim()
+            };
+        }
+        
+        // Fallback parser if regex didn't extract the table
+        if (!found) {
+            const lines = ariaLabel.split('\\n');
+            let currentGroup = "";
+            for (const line of lines) {
+                if (line.includes('%') && line.includes('→')) {
+                    const parts = line.split('|');
+                    if (parts.length >= 4) {
+                        const namePart = parts[1].replace(/\\*/g, '').replace('🟢', '').trim();
+                        const valPart = parts[3].trim();
+                        
+                        const m = valPart.match(/([0-9.]+)%.*?([0-9hms ]+)[(]([^)]+)[)]/);
+                        if (m) {
+                            results[namePart] = { percent: m[1]+"%", countdown: m[2].trim(), eta: m[3].trim() };
+                            found = true;
+                        }
+                    }
+                }
+            }
+        }
+        
+        if (found) {
+            return { success: true, data: results };
+        }
+        
+        // Absolute fallback using the status bar string itself
+        const rawText = (targetLabel?.innerText || "").replace(/\\s+/g, ' ');
+        const parseLine = rawText.split('|').map(p => p.trim());
+        parseLine.forEach(p => {
+            const kv = p.split(':');
+            if (kv.length >= 2) {
+                results[kv[0].replace('🟢','').trim()] = { percent: kv[1].trim(), countdown: 'N/A', eta: 'N/A' };
+            }
         });
+
         return { success: true, data: results };
     })()`;
 
@@ -571,10 +622,12 @@ export async function getDetailedUsage(cdpList) {
 
 export async function openUsageDialog(cdpList) {
     const SCRIPT = `(() => {
-        const label = Array.from(document.querySelectorAll('*')).find(el => {
+        const labels = Array.from(document.querySelectorAll('.statusbar-item-label, .statusbar-item a, .statusbar-item span, .statusbar-item')).filter(el => {
             const t = (el.innerText || "").trim();
-            return t.includes('%') && t.length < 100 && el.offsetParent !== null;
+            return t.includes('%') && el.offsetParent !== null;
         });
+        labels.sort((a, b) => a.innerText.length - b.innerText.length);
+        const label = labels[0];
         if (label) {
             label.click();
             return { success: true };
@@ -636,7 +689,7 @@ export async function getAppState(cdpList) {
             const usageItem = statusItems.find(el => {
                 if (isForbidden(el)) return false;
                 const t = (el.innerText || "").trim();
-                return t.length < 100 && (t.includes('GP:') || t.includes('GF:') || t.includes('Claude:')) && t.includes('%');
+                return t.length < 200 && (t.includes('GP:') || t.includes('Group 1:') || t.includes('%')) && t.includes('|') && t.includes('%');
             });
             if (usageItem) state.usage = usageItem.innerText.trim();
         }
@@ -667,11 +720,16 @@ export async function getAppState(cdpList) {
         }
 
         // 4. 定位用量標籤 (單獨抓取文字，供 UI 點擊使用)
-        const usageLabel = Array.from(document.querySelectorAll('*')).find(el => {
+        const usageLabels = Array.from(document.querySelectorAll('.statusbar-item-label, .statusbar-item a, .statusbar-item span, .statusbar-item')).filter(el => {
             const t = (el.innerText || "").trim();
-            return t.includes('%') && t.length < 10 && el.offsetParent !== null;
+            // Match generic quota string with percentages and separators
+            return t.includes('%') && t.includes('|') && el.offsetParent !== null;
         });
+        // Prefer longer strings to capture the full combo (e.g. GP: 100% | GF: 100%)
+        usageLabels.sort((a, b) => b.innerText.length - a.innerText.length);
+        const usageLabel = usageLabels[0];
         if (usageLabel) state.usageText = usageLabel.innerText.trim();
+        else if (state.usage) state.usageText = state.usage;
 
         return state;
     } catch (e) { return { error: e.toString() }; }
