@@ -359,126 +359,133 @@ export async function injectMessage(cdpList, text, force = false) {
 }
 
 export async function injectImage(cdpList, base64Data, text = null) {
-    const safeText = JSON.stringify(text || "");
     const results = [];
 
-    for (const cdp of cdpList) {
-        // VS Code and similar Electron apps have multiple contexts per page
-        const cdpContexts = cdp.contexts.length > 0 ? cdp.contexts : [{ id: undefined }];
+    // CDP 腳本：多重補強注入
+    const EXPRESSION = `(async () => {
+        const logs = [];
+        const log = (m) => logs.push(\`[\${new Date().toISOString().split('T')[1]}] \${m}\`);
 
-        for (const ctx of cdpContexts) {
-            const EXPRESSION = `(async () => {
-    const logs = [];
-    function log(msg) { logs.push(msg); }
-
-    try {
-        // 1. Locate Target
-        let editors = [...document.querySelectorAll('[data-lexical-editor="true"][contenteditable="true"]')].filter(el => el.offsetParent !== null);
-        let target = editors.at(-1);
-
-        if (!target) {
-            let candidates = Array.from(document.querySelectorAll('[contenteditable="true"], textarea, [role="textbox"]'))
-                .filter(el => el.offsetWidth > 0 && el.offsetHeight > 0);
-            candidates.sort((a, b) => {
-                const aLex = a.hasAttribute('data-lexical-editor') ? 1 : 0;
-                const bLex = b.hasAttribute('data-lexical-editor') ? 1 : 0;
-                if (aLex !== bLex) return bLex - aLex;
-                return (b.offsetWidth * b.offsetHeight) - (a.offsetWidth * a.offsetHeight);
-            });
-            target = candidates[0];
-        }
-
-        if (!target) return { ok: false, error: "no_editor_in_context", logs: logs };
-
-        log('Target: ' + target.tagName + ' cls: ' + target.className.substring(0, 50));
-
-        target.focus();
         try {
-            const rect = target.getBoundingClientRect();
-            const x = rect.left + rect.width / 2;
-            const y = rect.top + rect.height / 2;
-            target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: x, clientY: y }));
-            target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: x, clientY: y }));
-            target.click();
-        } catch (e) { }
+            let editors = [...document.querySelectorAll('[data-lexical-editor="true"][contenteditable="true"]')].filter(el => el.offsetParent !== null);
+            let target = editors.at(-1);
 
-        // 2. Prepare Blob & DataTransfer
-        const parts = "${base64Data}".split(',');
-        const byteString = atob(parts[parts.length - 1]);
-        const mimeString = parts[0].split(':')[1].split(';')[0];
-        const ab = new ArrayBuffer(byteString.length);
-        const ia = new Uint8Array(ab);
-        for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
-        const blob = new Blob([ab], { type: mimeString });
-        const file = new File([blob], "upload.png", { type: mimeString });
+            if (!target) {
+                let candidates = Array.from(document.querySelectorAll('[contenteditable="true"], textarea, [role="textbox"]'))
+                    .filter(el => el.offsetWidth > 0 && el.offsetHeight > 0);
+                candidates.sort((a, b) => (b.offsetWidth * b.offsetHeight) - (a.offsetWidth * a.offsetHeight));
+                target = candidates[0];
+            }
 
-        const dt = new DataTransfer();
-        dt.items.add(file);
-        // Critical for some apps: ensure files property is populated
-        try {
+            if (!target) return { ok: false, error: "no_editor_found", logs: logs };
+
+            // 1. 穩定光標定位 (不再使用 selectAll/delete，避免清空)
+            target.focus();
+            const selection = window.getSelection();
+            if (selection) {
+                const range = document.createRange();
+                range.selectNodeContents(target);
+                range.collapse(false); // 固定在末尾
+                selection.removeAllRanges();
+                selection.addRange(range);
+            }
+
+            // 2. 準備數據
+            const parts = "${base64Data}".split(',');
+            const byteString = atob(parts[parts.length - 1]);
+            const mimeString = parts[0].split(':')[1].split(';')[0];
+            const ab = new ArrayBuffer(byteString.length);
+            const ia = new Uint8Array(ab);
+            for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
+            const blob = new Blob([ab], { type: mimeString });
+            const file = new File([blob], "upload.png", { type: mimeString });
+
+            const dt = new DataTransfer();
+            dt.items.add(file);
             Object.defineProperty(dt, 'files', { value: [file], writable: false });
-        } catch (e) { log('Could not define dt.files: ' + e.message); }
 
-        if (${!!text}) dt.setData('text/plain', ${safeText});
+            const getImgStatus = () => document.querySelectorAll('img').length + document.querySelectorAll('[class*="chip"]').length;
+            const initialCount = getImgStatus();
 
-// 3. Injection Sequence
-const getStatus = () => ({
-    imgs: document.querySelectorAll('img').length,
-    chips: document.querySelectorAll('[class*="chip"], [class*="Image"], [class*="image"]').length,
-    children: target.children.length
-});
-const before = getStatus();
+            // 3. 嘗試注入 (僅使用最穩定的 Paste)
+            log('Injecting Image...');
+            target.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true, composed: true }));
+            
+            // 稍作等待以確保 Lexical 分配了 DecoratorNode
+            await new Promise(r => setTimeout(r, 1000));
 
-log('Dispatching Paste...');
-target.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true, composed: true }));
+            // 4. 發送按紐物理偵測 (不論有無按紐點擊，最後都交由 CDP 入口)
+            const findSend = () => {
+                const explicit = document.querySelector('button[data-tooltip-id*="send"], button[aria-label*="Send"], button[aria-label*="發送"]');
+                if (explicit && explicit.offsetParent !== null) return explicit;
+                const svgs = Array.from(document.querySelectorAll('button svg')).filter(svg => {
+                    const cls = (svg.getAttribute('class') || "").toLowerCase();
+                    return cls.includes('send') || cls.includes('arrow') || cls.includes('up');
+                });
+                return svgs.length > 0 ? svgs[0].closest('button') : null;
+            };
 
-try {
-    target.dispatchEvent(new InputEvent('beforeinput', {
-        dataTransfer: dt, inputType: 'insertFromPaste', bubbles: true, cancelable: true, composed: true
-    }));
-} catch (e) { }
+            const sendBtn = findSend();
+            let rect = null;
+            if (sendBtn) {
+                const r = sendBtn.getBoundingClientRect();
+                rect = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+            }
 
-await new Promise(r => setTimeout(r, 600));
+            return { 
+                ok: true, 
+                readyForCdp: true, 
+                injected: getImgStatus() > initialCount,
+                rect: rect, 
+                logs: logs 
+            };
+        } catch (e) {
+            return { ok: false, error: e.toString(), logs: logs };
+        }
+    })()`;
 
-if (getStatus().children <= before.children && getStatus().imgs <= before.imgs) {
-    log('Paste failed, trying Drop...');
-    target.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true, composed: true }));
-    await new Promise(r => setTimeout(r, 600));
-}
-
-const after = getStatus();
-log('Status change - Imgs: ' + (after.imgs - before.imgs) + ', Children: ' + (after.children - before.children));
-
-// 4. Send Logic (Priority: Keyboard Enter)
-log('Waiting for processing...');
-await new Promise(r => setTimeout(r, 2000));
-
-// ALWAYS trigger Enter as the primary send method for uploaded images
-log('Triggering Enter send...');
-target.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter", code: "Enter", keyCode: 13, which: 13 }));
-await new Promise(r => setTimeout(r, 100));
-target.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: "Enter", code: "Enter", keyCode: 13, which: 13 }));
-
-return { ok: true, method: "keyboard_enter", logs: logs };
-
-                } catch (e) {
-    return { ok: false, error: e.toString(), logs: logs };
-}
-            }) ()`;
-
+    for (const cdp of cdpList) {
+        const ctxIds = cdp.contexts.length > 0 ? cdp.contexts.map(c => c.id) : [undefined];
+        for (const ctxId of ctxIds) {
             try {
-                const evalParams = { expression: EXPRESSION, returnByValue: true, awaitPromise: true };
-                if (ctx.id !== undefined) evalParams.contextId = ctx.id;
+                const params = { expression: EXPRESSION, returnByValue: true, awaitPromise: true };
+                if (ctxId !== undefined) params.contextId = ctxId;
+                const res = await cdp.call("Runtime.evaluate", params);
+                const val = res.result?.value;
 
-                const res = await cdp.call("Runtime.evaluate", evalParams);
-                const val = res.result.value;
-                if (val && (val.ok || val.error !== "no_editor_in_context")) {
-                    return val; // Found a valid editor or hit a real error, stop here
+                if (val && val.readyForCdp) {
+                    // CDP 物理輸入文字
+                    if (text) {
+                        console.log('  [CDP] Inserting text via hardware bridge...');
+                        await cdp.call('Input.insertText', { text: " " + text });
+                        await new Promise(r => setTimeout(r, 600)); // 增加緩衝以防衝突
+                    }
+
+                    // 等待 Lexical 解析與按鈕啟用
+                    console.log('  [CDP] Waiting for Lexical stability (3s)...');
+                    await new Promise(r => setTimeout(r, 3000));
+
+                    // 策略 1: CDP 物理坐標點擊 (最穩定的點擊法)
+                    if (val.rect) {
+                        console.log('  [CDP] Triggering physical mouse click at', val.rect);
+                        const mouseBase = { x: Math.floor(val.rect.x), y: Math.floor(val.rect.y), button: 'left', clickCount: 1 };
+                        await cdp.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...mouseBase });
+                        await new Promise(r => setTimeout(r, 50));
+                        await cdp.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...mouseBase });
+                        return { ok: true, method: "cdp_physical_click", logs: val.logs };
+                    }
+
+                    // 策略 2: CDP 實體 Enter 備援 (同步 injectMessage 的成功參數)
+                    console.log('  [CDP] Triggering hardware Enter fallback...');
+                    const k = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, modifiers: 0 };
+                    await cdp.call('Input.dispatchKeyEvent', { type: 'keyDown', ...k });
+                    await new Promise(r => setTimeout(r, 50));
+                    await cdp.call('Input.dispatchKeyEvent', { type: 'keyUp', ...k });
+
+                    return { ok: true, method: "cdp_image_blind_ninja_v2", logs: val.logs };
                 }
                 if (val) results.push(val);
-            } catch (e) {
-                // Context might be gone
-            }
+            } catch (e) { }
         }
     }
 
@@ -487,117 +494,117 @@ return { ok: true, method: "keyboard_enter", logs: logs };
 
 export async function getDetailedUsage(cdpList) {
     const SCRIPT = `(async () => {
-        const labels = Array.from(document.querySelectorAll('.statusbar-item-label, .statusbar-item a, .statusbar-item span, .statusbar-item')).filter(el => {
-            const t = (el.innerText || "").trim();
-            return t.includes('%') && el.offsetParent !== null;
-        });
+    const labels = Array.from(document.querySelectorAll('.statusbar-item-label, .statusbar-item a, .statusbar-item span, .statusbar-item')).filter(el => {
+        const t = (el.innerText || "").trim();
+        return t.includes('%') && el.offsetParent !== null;
+    });
 
-        const allAriaLabels = [];
-        let firstTargetLabel = null;
-        
+    const allAriaLabels = [];
+    let firstTargetLabel = null;
+
+    for (const l of labels) {
+        let el = l;
+        while (el && !el.classList?.contains('statusbar-item')) {
+            if (el.parentElement) el = el.parentElement;
+            else break;
+        }
+        if (el) {
+            const aria = el.getAttribute('aria-label') || el.querySelector('[aria-label]')?.getAttribute('aria-label') || "";
+            if (aria.includes('配額') || aria.includes('100%') || aria.includes('%')) {
+                allAriaLabels.push(aria);
+                if (!firstTargetLabel) firstTargetLabel = l;
+            }
+        }
+    }
+
+    if (allAriaLabels.length === 0) {
         for (const l of labels) {
-            let el = l;
-            while(el && !el.classList?.contains('statusbar-item')) {
-                if (el.parentElement) el = el.parentElement;
-                else break;
-            }
-            if (el) {
-                const aria = el.getAttribute('aria-label') || el.querySelector('[aria-label]')?.getAttribute('aria-label') || "";
-                if (aria.includes('配額') || aria.includes('100%') || aria.includes('%')) {
-                    allAriaLabels.push(aria);
-                    if (!firstTargetLabel) firstTargetLabel = l;
-                }
+            const aria = l.getAttribute('aria-label') || l.title || "";
+            if (aria.includes('%')) {
+                allAriaLabels.push(aria);
+                if (!firstTargetLabel) firstTargetLabel = l;
             }
         }
-        
-        if (allAriaLabels.length === 0) {
-            for(const l of labels) {
-               const aria = l.getAttribute('aria-label') || l.title || "";
-               if (aria.includes('%')) { 
-                   allAriaLabels.push(aria);
-                   if (!firstTargetLabel) firstTargetLabel = l;
-               }
-            }
-        }
-        
-        if (allAriaLabels.length === 0 && !firstTargetLabel) return { error: 'Label not found' };
-        
-        const rawResults = {};
-        let found = false;
+    }
 
-        allAriaLabels.forEach(ariaLabel => {
-            // 1. Process markdown table rows
-            const regex = /[|] .*?[*][*]([^*]+)[*][*] [|] .*? [|] ([0-9.]+)%[^0-9]*?([0-9hms ]+)[(]([^)]+)[)] [|]/g;
-            let match;
-            while ((match = regex.exec(ariaLabel)) !== null) {
-                found = true;
-                rawResults[match[1].trim()] = {
-                    percent: match[2].trim() + "%",
-                    countdown: match[3].trim(),
-                    eta: match[4].trim()
-                };
-            }
-            
-            // 2. Process basic lines (fallback)
-            const lines = ariaLabel.split('\\n');
-            for (const line of lines) {
-                if (line.includes('%') && (line.includes('→') || line.includes('|'))) {
-                    const parts = line.split('|');
-                    if (parts.length >= 4) {
-                        const namePart = parts[1].replace(/\\*/g, '').replace('🟢', '').trim();
-                        if (namePart && (!rawResults[namePart] || rawResults[namePart].eta === 'N/A')) {
-                            const valPart = parts[3].trim();
-                            const m = valPart.match(/([0-9.]+)%.*?([0-9hms ]+)[(]([^)]+)[)]/);
-                            if (m) {
-                                rawResults[namePart] = { percent: m[1]+"%", countdown: m[2].trim(), eta: m[3].trim() };
-                                found = true;
-                            }
+    if (allAriaLabels.length === 0 && !firstTargetLabel) return { error: 'Label not found' };
+
+    const rawResults = {};
+    let found = false;
+
+    allAriaLabels.forEach(ariaLabel => {
+        // 1. Process markdown table rows
+        const regex = /[|] .*?[*][*]([^*]+)[*][*] [|] .*? [|] ([0-9.]+)%[^0-9]*?([0-9hms ]+)[(]([^)]+)[)] [|]/g;
+        let match;
+        while ((match = regex.exec(ariaLabel)) !== null) {
+            found = true;
+            rawResults[match[1].trim()] = {
+                percent: match[2].trim() + "%",
+                countdown: match[3].trim(),
+                eta: match[4].trim()
+            };
+        }
+
+        // 2. Process basic lines (fallback)
+        const lines = ariaLabel.split('\\n');
+        for (const line of lines) {
+            if (line.includes('%') && (line.includes('→') || line.includes('|'))) {
+                const parts = line.split('|');
+                if (parts.length >= 4) {
+                    const namePart = parts[1].replace(/\\*/g, '').replace('🟢', '').trim();
+                    if (namePart && (!rawResults[namePart] || rawResults[namePart].eta === 'N/A')) {
+                        const valPart = parts[3].trim();
+                        const m = valPart.match(/([0-9.]+)%.*?([0-9hms ]+)[(]([^)]+)[)]/);
+                        if (m) {
+                            rawResults[namePart] = { percent: m[1] + "%", countdown: m[2].trim(), eta: m[3].trim() };
+                            found = true;
                         }
                     }
                 }
             }
-        });
+        }
+    });
 
-        // 3. Logic: Grouping and merging
-        const grouped = {};
-        const getGroupKey = (name) => {
-            const n = name.toLowerCase();
-            if (n.includes('flash')) return "Gemini 3 Flash";
-            if (n.includes('pro')) return "Gemini 3 Pro (H/L)";
-            if (n.includes('gpt') || n.includes('claude') || n.includes('4o')) return "Claude / GPT-4o";
-            return name; // Keep others as is
-        };
+    // 3. Logic: Grouping and merging
+    const grouped = {};
+    const getGroupKey = (name) => {
+        const n = name.toLowerCase();
+        if (n.includes('flash')) return "Gemini 3 Flash";
+        if (n.includes('pro')) return "Gemini 3 Pro (H/L)";
+        if (n.includes('gpt') || n.includes('claude') || n.includes('4o')) return "Claude / GPT-4o";
+        return name; // Keep others as is
+    };
 
-        Object.keys(rawResults).forEach(name => {
-            const key = getGroupKey(name);
-            const data = rawResults[name];
-            // If group already has data, prioritize the one with better info (non-N/A)
-            if (!grouped[key] || (grouped[key].eta === 'N/A' && data.eta !== 'N/A')) {
-                grouped[key] = data;
+    Object.keys(rawResults).forEach(name => {
+        const key = getGroupKey(name);
+        const data = rawResults[name];
+        // If group already has data, prioritize the one with better info (non-N/A)
+        if (!grouped[key] || (grouped[key].eta === 'N/A' && data.eta !== 'N/A')) {
+            grouped[key] = data;
+        }
+    });
+
+    if (found) return { success: true, data: grouped };
+
+    // Final fallback: use visible text from label
+    if (firstTargetLabel) {
+        const rawText = (firstTargetLabel.innerText || "").replace(/\\s+/g, ' ');
+        const parseLine = rawText.split('|').map(p => p.trim());
+        const fallbackResults = {};
+        parseLine.forEach(p => {
+            const kv = p.split(':');
+            if (kv.length >= 2) {
+                const name = kv[0].replace('🟢', '').trim();
+                const key = getGroupKey(name);
+                fallbackResults[key] = { percent: kv[1].trim(), countdown: 'N/A', eta: 'N/A' };
+                found = true;
             }
         });
-        
-        if (found) return { success: true, data: grouped };
-        
-        // Final fallback: use visible text from label
-        if (firstTargetLabel) {
-            const rawText = (firstTargetLabel.innerText || "").replace(/\\s+/g, ' ');
-            const parseLine = rawText.split('|').map(p => p.trim());
-            const fallbackResults = {};
-            parseLine.forEach(p => {
-                const kv = p.split(':');
-                if (kv.length >= 2) {
-                    const name = kv[0].replace('🟢','').trim();
-                    const key = getGroupKey(name);
-                    fallbackResults[key] = { percent: kv[1].trim(), countdown: 'N/A', eta: 'N/A' };
-                    found = true;
-                }
-            });
-            if (found) return { success: true, data: fallbackResults };
-        }
+        if (found) return { success: true, data: fallbackResults };
+    }
 
-        return { error: 'No data matches found' };
-    })()`;
+    return { error: 'No data matches found' };
+})()`;
 
     for (const cdp of cdpList) {
         for (const ctx of cdp.contexts) {
@@ -612,18 +619,18 @@ export async function getDetailedUsage(cdpList) {
 
 export async function openUsageDialog(cdpList) {
     const SCRIPT = `(() => {
-        const labels = Array.from(document.querySelectorAll('.statusbar-item-label, .statusbar-item a, .statusbar-item span, .statusbar-item')).filter(el => {
-            const t = (el.innerText || "").trim();
-            return t.includes('%') && el.offsetParent !== null;
-        });
-        labels.sort((a, b) => a.innerText.length - b.innerText.length);
-        const label = labels[0];
-        if (label) {
-            label.click();
-            return { success: true };
-        }
-        return { error: 'Usage label not found' };
-    })()`;
+    const labels = Array.from(document.querySelectorAll('.statusbar-item-label, .statusbar-item a, .statusbar-item span, .statusbar-item')).filter(el => {
+        const t = (el.innerText || "").trim();
+        return t.includes('%') && el.offsetParent !== null;
+    });
+    labels.sort((a, b) => a.innerText.length - b.innerText.length);
+    const label = labels[0];
+    if (label) {
+        label.click();
+        return { success: true };
+    }
+    return { error: 'Usage label not found' };
+})()`;
 
     for (const cdp of cdpList) {
         for (const ctx of cdp.contexts) {
@@ -642,7 +649,7 @@ export async function getAppState(cdpList) {
     const EXP = `(async () => {
     try {
         const state = { mode: 'Unknown', model: 'Unknown', usage: '', title: document.title || "" };
-        
+
         // 定義禁區：編輯器、終端機、輸出視窗、通知區 (避免抓到 log 或代碼)
         const isForbidden = (el) => {
             return el.closest('.monaco-editor, .view-lines, .terminal-container, .part.panel, .notifications-toasts');
@@ -654,14 +661,14 @@ export async function getAppState(cdpList) {
             const allItems = Array.from(toolbar.querySelectorAll('span, div')).filter(el => {
                 return el.children.length === 0 && !isForbidden(el);
             });
-            
+
             // 模式 (Fast/Planning)
             const modeNode = allItems.find(el => {
                 const t = (el.innerText || "").trim();
                 return t === 'Fast' || t === 'Planning';
             });
             if (modeNode) state.mode = modeNode.innerText.trim();
-            
+
             // 模型 (長度優先，且不得超過 50 字)
             const modelCandidates = allItems.filter(el => {
                 const t = (el.innerText || "").trim();
@@ -693,7 +700,7 @@ export async function getAppState(cdpList) {
             });
             if (fallbackModel) state.model = fallbackModel.innerText.trim();
         }
-        
+
         if (state.mode === 'Unknown') {
             const fallbackMode = Array.from(document.querySelectorAll('span, div, button, .statusbar-item, [aria-label]')).find(el => {
                 if (isForbidden(el)) return false;
