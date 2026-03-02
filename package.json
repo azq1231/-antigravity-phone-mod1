@@ -4,8 +4,9 @@
     "type": "module",
     "description": "Mobile web interface for monitoring Antigravity chat via visual snapshots",
     "scripts": {
-        "start": "node server.js",
-        "dev": "node server.js",
+        "start": "node server_v4.js",
+        "dev": "node server_v4.js",
+        "watch": "node --watch --watch-path=./core --watch-path=./routes --watch-path=./server_v4.js server_v4.js",
         "test": "node scripts/sanity_check.js && npx playwright test",
         "test:unit": "vitest run",
         "test:watch": "vitest",

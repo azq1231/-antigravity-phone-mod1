@@ -50,7 +50,8 @@ echo ---------------------------------------
 echo   🏠 本地訪問: http://localhost:3004
 echo   🌐 外網訪問: https://ag.monyangood.com
 echo ---------------------------------------
-node server_v4.js
+echo [監控] 已啟動 Watch 模式，修改 core/routes 或 server_v4.js 將自動重啟伺服器。
+npm run watch
 echo.
 echo [注意] 伺服器已停止。正在清理穿透程序...
 taskkill /F /IM cloudflared.exe >nul 2>&1

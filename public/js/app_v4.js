@@ -367,6 +367,8 @@ async function sendMessage(retryCount = 0) {
         if (data.ok || data.ignored) {
             messageInput.value = '';
             pendingImage = null;
+            if (imageInput) imageInput.value = '';
+            if (imagePreviewArea) imagePreviewArea.style.display = 'none';
             if (attachBtn) attachBtn.classList.remove('active');
             statusText.textContent = `Live (${cachedVLabel})`;
             isSending = false;
@@ -663,15 +665,45 @@ function renderHistoryModal(items) {
     }
 }
 
+const imagePreviewArea = document.getElementById('imagePreviewArea');
+const imagePreviewThumb = document.getElementById('imagePreviewThumb');
+const imagePreviewInfo = document.getElementById('imagePreviewInfo');
+const removeImgBtn = document.getElementById('removeImgBtn');
+
 if (imageInput) {
     imageInput.addEventListener('change', (e) => {
         const file = e.target.files[0];
         if (!file) return;
+        
+        console.log('[App] File selected:', file.name, file.size, file.type);
         if (attachBtn) attachBtn.classList.add('active');
+        
         const reader = new FileReader();
-        reader.onload = (ev) => { pendingImage = ev.target.result; statusText.textContent = '📷 Ready'; setTimeout(() => statusText.textContent = `Live (${cachedVLabel})`, 3000); };
+        reader.onerror = (err) => {
+            console.error('[App] FileReader error:', err);
+            statusText.textContent = '❌ Reader Error';
+        };
+        reader.onload = (ev) => {
+            pendingImage = ev.target.result;
+            if (imagePreviewArea) imagePreviewArea.style.display = 'flex';
+            if (imagePreviewThumb) imagePreviewThumb.src = pendingImage;
+            if (imagePreviewInfo) imagePreviewInfo.textContent = `Ready: ${file.name} (${(file.size/1024).toFixed(1)} KB)`;
+            
+            statusText.textContent = '📷 Ready';
+            setTimeout(() => { if (statusText.textContent === '📷 Ready') statusText.textContent = `Live (${cachedVLabel})`; }, 3000);
+        };
         reader.readAsDataURL(file);
     });
+}
+
+if (removeImgBtn) {
+    removeImgBtn.onclick = () => {
+        pendingImage = null;
+        if (imageInput) imageInput.value = '';
+        if (imagePreviewArea) imagePreviewArea.style.display = 'none';
+        if (attachBtn) attachBtn.classList.remove('active');
+        statusText.textContent = `Live (${cachedVLabel})`;
+    };
 }
 
 if (mainTitle) {

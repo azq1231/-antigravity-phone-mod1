@@ -446,54 +446,20 @@ if (getStatus().children <= before.children && getStatus().imgs <= before.imgs) 
     await new Promise(r => setTimeout(r, 600));
 }
 
-// Strategy F: Direct DOM insertion (Bypasses TrustedHTML for simple elements)
-if (getStatus().children <= before.children && getStatus().imgs <= before.imgs) {
-    log('Events failed, attempting manual insertion...');
-    try {
-        const img = document.createElement('img');
-        img.src = "${base64Data}";
-        img.style.maxWidth = '100px';
-        img.setAttribute('data-injected', 'true');
-
-        const selection = window.getSelection();
-        if (selection.rangeCount > 0) {
-            const range = selection.getRangeAt(0);
-            range.deleteContents();
-            range.insertNode(img);
-            log('Inserted via Range API');
-        } else {
-            target.appendChild(img);
-            log('Appended to target');
-        }
-    } catch (e) { log('Manual insertion failed: ' + e.message); }
-}
-
 const after = getStatus();
 log('Status change - Imgs: ' + (after.imgs - before.imgs) + ', Children: ' + (after.children - before.children));
 
-// 4. Send Button Logic
+// 4. Send Logic (Priority: Keyboard Enter)
 log('Waiting for processing...');
 await new Promise(r => setTimeout(r, 2000));
 
-const buttons = Array.from(document.querySelectorAll('button, [role="button"], a.button, [title*="Send"], [aria-label*="Send"], [id*="send"], [data-testid*="send"]'));
-const findSend = (b) => {
-    const txt = (b.innerText || b.getAttribute('aria-label') || b.title || b.id || b.getAttribute('data-testid') || '').toLowerCase();
-    if (/continue|繼續|stop|停止/i.test(txt)) return false;
-    if (/send|submit|發送|送出|tweet/i.test(txt)) return true;
-    // Icon detection
-    return b.querySelector('svg.lucide-arrow-right, svg.lucide-arrow-up, svg.lucide-send, .lucide-send, svg[class*="send"], svg.lucide-zap');
-};
+// ALWAYS trigger Enter as the primary send method for uploaded images
+log('Triggering Enter send...');
+target.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter", code: "Enter", keyCode: 13, which: 13 }));
+await new Promise(r => setTimeout(r, 100));
+target.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: "Enter", code: "Enter", keyCode: 13, which: 13 }));
 
-const btn = buttons.find(findSend);
-if (btn && btn.offsetParent !== null) {
-    btn.click();
-    log('Clicked: ' + (btn.innerText || btn.getAttribute('aria-label') || btn.tagName));
-    return { ok: true, method: "click", logs: logs };
-} else {
-    log('Enter fallback');
-    target.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter", code: "Enter", keyCode: 13, which: 13 }));
-    return { ok: true, method: "enter", logs: logs };
-}
+return { ok: true, method: "keyboard_enter", logs: logs };
 
                 } catch (e) {
     return { ok: false, error: e.toString(), logs: logs };
@@ -525,9 +491,9 @@ export async function getDetailedUsage(cdpList) {
             const t = (el.innerText || "").trim();
             return t.includes('%') && el.offsetParent !== null;
         });
-        
-        let targetLabel = null;
-        let ariaLabel = "";
+
+        const allAriaLabels = [];
+        let firstTargetLabel = null;
         
         for (const l of labels) {
             let el = l;
@@ -538,75 +504,99 @@ export async function getDetailedUsage(cdpList) {
             if (el) {
                 const aria = el.getAttribute('aria-label') || el.querySelector('[aria-label]')?.getAttribute('aria-label') || "";
                 if (aria.includes('配額') || aria.includes('100%') || aria.includes('%')) {
-                    targetLabel = l;
-                    ariaLabel = aria;
-                    break;
+                    allAriaLabels.push(aria);
+                    if (!firstTargetLabel) firstTargetLabel = l;
                 }
             }
         }
         
-        if (!ariaLabel) {
+        if (allAriaLabels.length === 0) {
             for(const l of labels) {
                const aria = l.getAttribute('aria-label') || l.title || "";
-               if (aria.includes('%')) { ariaLabel = aria; break; }
+               if (aria.includes('%')) { 
+                   allAriaLabels.push(aria);
+                   if (!firstTargetLabel) firstTargetLabel = l;
+               }
             }
         }
         
-        if (!targetLabel && !ariaLabel) return { error: 'Label not found' };
+        if (allAriaLabels.length === 0 && !firstTargetLabel) return { error: 'Label not found' };
         
-        const results = {};
-        
-        // Use RegEx to parse markdown table from AriaLabel
-        // Pattern: | **Model Name** | bar | 60.00% -> 2h 47m (23:50) |
-        const regex = /[|] .*?[*][*]([^*]+)[*][*] [|] .*? [|] ([0-9.]+)%[^0-9]*?([0-9hms ]+)[(]([^)]+)[)] [|]/g;
-        let match;
+        const rawResults = {};
         let found = false;
-        
-        while ((match = regex.exec(ariaLabel)) !== null) {
-            found = true;
-            results[match[1].trim()] = {
-                percent: match[2].trim() + "%",
-                countdown: match[3].trim(),
-                eta: match[4].trim()
-            };
-        }
-        
-        // Fallback parser if regex didn't extract the table
-        if (!found) {
+
+        allAriaLabels.forEach(ariaLabel => {
+            // 1. Process markdown table rows
+            const regex = /[|] .*?[*][*]([^*]+)[*][*] [|] .*? [|] ([0-9.]+)%[^0-9]*?([0-9hms ]+)[(]([^)]+)[)] [|]/g;
+            let match;
+            while ((match = regex.exec(ariaLabel)) !== null) {
+                found = true;
+                rawResults[match[1].trim()] = {
+                    percent: match[2].trim() + "%",
+                    countdown: match[3].trim(),
+                    eta: match[4].trim()
+                };
+            }
+            
+            // 2. Process basic lines (fallback)
             const lines = ariaLabel.split('\\n');
-            let currentGroup = "";
             for (const line of lines) {
-                if (line.includes('%') && line.includes('→')) {
+                if (line.includes('%') && (line.includes('→') || line.includes('|'))) {
                     const parts = line.split('|');
                     if (parts.length >= 4) {
                         const namePart = parts[1].replace(/\\*/g, '').replace('🟢', '').trim();
-                        const valPart = parts[3].trim();
-                        
-                        const m = valPart.match(/([0-9.]+)%.*?([0-9hms ]+)[(]([^)]+)[)]/);
-                        if (m) {
-                            results[namePart] = { percent: m[1]+"%", countdown: m[2].trim(), eta: m[3].trim() };
-                            found = true;
+                        if (namePart && (!rawResults[namePart] || rawResults[namePart].eta === 'N/A')) {
+                            const valPart = parts[3].trim();
+                            const m = valPart.match(/([0-9.]+)%.*?([0-9hms ]+)[(]([^)]+)[)]/);
+                            if (m) {
+                                rawResults[namePart] = { percent: m[1]+"%", countdown: m[2].trim(), eta: m[3].trim() };
+                                found = true;
+                            }
                         }
                     }
                 }
             }
-        }
-        
-        if (found) {
-            return { success: true, data: results };
-        }
-        
-        // Absolute fallback using the status bar string itself
-        const rawText = (targetLabel?.innerText || "").replace(/\\s+/g, ' ');
-        const parseLine = rawText.split('|').map(p => p.trim());
-        parseLine.forEach(p => {
-            const kv = p.split(':');
-            if (kv.length >= 2) {
-                results[kv[0].replace('🟢','').trim()] = { percent: kv[1].trim(), countdown: 'N/A', eta: 'N/A' };
-            }
         });
 
-        return { success: true, data: results };
+        // 3. Logic: Grouping and merging
+        const grouped = {};
+        const getGroupKey = (name) => {
+            const n = name.toLowerCase();
+            if (n.includes('flash')) return "Gemini 3 Flash";
+            if (n.includes('pro')) return "Gemini 3 Pro (H/L)";
+            if (n.includes('gpt') || n.includes('claude') || n.includes('4o')) return "Claude / GPT-4o";
+            return name; // Keep others as is
+        };
+
+        Object.keys(rawResults).forEach(name => {
+            const key = getGroupKey(name);
+            const data = rawResults[name];
+            // If group already has data, prioritize the one with better info (non-N/A)
+            if (!grouped[key] || (grouped[key].eta === 'N/A' && data.eta !== 'N/A')) {
+                grouped[key] = data;
+            }
+        });
+        
+        if (found) return { success: true, data: grouped };
+        
+        // Final fallback: use visible text from label
+        if (firstTargetLabel) {
+            const rawText = (firstTargetLabel.innerText || "").replace(/\\s+/g, ' ');
+            const parseLine = rawText.split('|').map(p => p.trim());
+            const fallbackResults = {};
+            parseLine.forEach(p => {
+                const kv = p.split(':');
+                if (kv.length >= 2) {
+                    const name = kv[0].replace('🟢','').trim();
+                    const key = getGroupKey(name);
+                    fallbackResults[key] = { percent: kv[1].trim(), countdown: 'N/A', eta: 'N/A' };
+                    found = true;
+                }
+            });
+            if (found) return { success: true, data: fallbackResults };
+        }
+
+        return { error: 'No data matches found' };
     })()`;
 
     for (const cdp of cdpList) {
