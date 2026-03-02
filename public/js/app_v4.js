@@ -348,16 +348,30 @@ async function sendMessage(retryCount = 0) {
     if (!msg && !pendingImage) return;
     if (isSending && retryCount === 0) return;
 
+    // 暫存內容以備失敗時恢復
+    const lastMsg = msg;
+    const lastImg = pendingImage;
+
     if (retryCount === 0) {
         isSending = true;
         sendBtn.disabled = true;
         sendBtn.innerHTML = '<div class="loading-spinner"></div>';
         window.currentMsgId = 'm_' + Date.now().toString(36);
+
+        // --- 樂觀清空 (Optimistic Clear) ---
+        // 立即清空手機畫面，讓體感「零延遲」
+        messageInput.value = '';
+        messageInput.style.height = 'auto';
+        pendingImage = null;
+        if (imageInput) imageInput.value = '';
+        if (imagePreviewArea) imagePreviewArea.style.display = 'none';
+        if (attachBtn) attachBtn.classList.remove('active');
+        statusText.textContent = `🚀 Dispatching...`;
     }
 
     try {
         const payload = { message: msg, msgId: window.currentMsgId };
-        if (pendingImage) payload.image = pendingImage;
+        if (lastImg) payload.image = lastImg;
 
         const res = await fetchWithAuth(`/send?port=${currentViewingPort}&_t=${Date.now()}`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
@@ -365,25 +379,32 @@ async function sendMessage(retryCount = 0) {
         const data = await res.json();
 
         if (data.ok || data.ignored) {
-            messageInput.value = '';
-            pendingImage = null;
-            if (imageInput) imageInput.value = '';
-            if (imagePreviewArea) imagePreviewArea.style.display = 'none';
-            if (attachBtn) attachBtn.classList.remove('active');
             statusText.textContent = `Live (${cachedVLabel})`;
             isSending = false;
             sendBtn.disabled = false;
             sendBtn.innerHTML = 'Send';
             forceScrollToBottom = true;
+            // 成功後延遲更新畫面
+            setTimeout(loadSnapshot, 500);
             return;
         }
 
         if (data.reason === 'busy' && retryCount < 5) {
-            setTimeout(() => sendMessage(retryCount + 1), 2000);
+            statusText.textContent = `⏳ Busy, Retrying... (${retryCount + 1}/5)`;
+            setTimeout(() => sendMessage(retryCount + 1), 1500); // 這裡傳遞的是原函數邏輯，retryCount 會遞增
             return;
         }
         throw new Error(data.error || 'Send failed');
     } catch (e) {
+        // --- 失敗恢復 ---
+        // 如果真的失敗了，把內容填回去，避免用戶白打字
+        messageInput.value = lastMsg;
+        pendingImage = lastImg;
+        if (lastImg && imagePreviewArea) {
+            imagePreviewArea.style.display = 'flex';
+            if (attachBtn) attachBtn.classList.add('active');
+        }
+
         isSending = false;
         sendBtn.disabled = false;
         sendBtn.innerHTML = 'Send';
@@ -674,10 +695,10 @@ if (imageInput) {
     imageInput.addEventListener('change', (e) => {
         const file = e.target.files[0];
         if (!file) return;
-        
+
         console.log('[App] File selected:', file.name, file.size, file.type);
         if (attachBtn) attachBtn.classList.add('active');
-        
+
         const reader = new FileReader();
         reader.onerror = (err) => {
             console.error('[App] FileReader error:', err);
@@ -687,8 +708,8 @@ if (imageInput) {
             pendingImage = ev.target.result;
             if (imagePreviewArea) imagePreviewArea.style.display = 'flex';
             if (imagePreviewThumb) imagePreviewThumb.src = pendingImage;
-            if (imagePreviewInfo) imagePreviewInfo.textContent = `Ready: ${file.name} (${(file.size/1024).toFixed(1)} KB)`;
-            
+            if (imagePreviewInfo) imagePreviewInfo.textContent = `Ready: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+
             statusText.textContent = '📷 Ready';
             setTimeout(() => { if (statusText.textContent === '📷 Ready') statusText.textContent = `Live (${cachedVLabel})`; }, 3000);
         };

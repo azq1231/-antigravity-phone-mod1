@@ -420,18 +420,45 @@ export async function injectImage(cdpList, base64Data, text = null) {
                 await new Promise(r => setTimeout(r, 100));
             }
 
-            // 4. 發送按紐物理偵測 (不論有無按紐點擊，最後都交由 CDP 入口)
-            const findSend = () => {
-                const explicit = document.querySelector('button[data-tooltip-id*="send"], button[aria-label*="Send"], button[aria-label*="發送"]');
-                if (explicit && explicit.offsetParent !== null) return explicit;
-                const svgs = Array.from(document.querySelectorAll('button svg')).filter(svg => {
-                    const cls = (svg.getAttribute('class') || "").toLowerCase();
-                    return cls.includes('send') || cls.includes('arrow') || cls.includes('up');
-                });
-                return svgs.length > 0 ? svgs[0].closest('button') : null;
+            // 5. 尋找與點擊發送按紐 (精確排除 Plan/Mode 按鈕)
+            // 增加智能等待：等候按紐不再處於 disabled 狀態 (Lexical 處理圖片時常會暫時禁用按紐)
+            const waitForReady = async () => {
+                for (let j = 0; j < 20; j++) {
+                    const candidates = Array.from(document.querySelectorAll('button')).filter(btn => {
+                        if (btn.offsetParent === null) return false;
+                        const text = (btn.innerText || "").toLowerCase();
+                        const aria = (btn.getAttribute('aria-label') || "").toLowerCase();
+                        const tip = (btn.getAttribute('data-tooltip-id') || "").toLowerCase();
+                        if (text.includes('plan') || text.includes('fast') || text.includes('mode') || aria.includes('plan')) return false;
+                        if (aria.includes('send') || tip.includes('send') || aria.includes('發送') || text.includes('發送')) return true;
+                        const svg = btn.querySelector('svg');
+                        if (svg) {
+                            const cls = (svg.getAttribute('class') || "").toLowerCase();
+                            if (cls.includes('send') || (cls.includes('arrow') && cls.includes('up') && !cls.includes('chevron'))) return true;
+                        }
+                        return false;
+                    });
+                    
+                    if (candidates.length > 0) {
+                        const best = candidates.sort((a, b) => {
+                            const ra = a.getBoundingClientRect();
+                            const rb = b.getBoundingClientRect();
+                            return (rb.right + rb.bottom) - (ra.right + ra.bottom);
+                        })[0];
+                        
+                        // 檢查是否 Ready (非 disabled 且透明度正常)
+                        const style = window.getComputedStyle(best);
+                        if (!best.disabled && parseFloat(style.opacity || "1") > 0.8) {
+                            log('Send button is ready at poll ' + j);
+                            return best;
+                        }
+                    }
+                    await new Promise(r => setTimeout(r, 100));
+                }
+                return null;
             };
 
-            const sendBtn = findSend();
+            const sendBtn = await waitForReady();
             let rect = null;
             if (sendBtn) {
                 const r = sendBtn.getBoundingClientRect();
@@ -460,38 +487,57 @@ export async function injectImage(cdpList, base64Data, text = null) {
                 const val = res.result?.value;
 
                 if (val && val.readyForCdp) {
-                    // CDP 物理輸入文字
+                    // 1. 物理輸入文字前綴 (Lexical 兼容性較佳)
                     if (text) {
-                        console.log('  [CDP] Inserting text via hardware bridge...');
-                        await cdp.call('Input.insertText', { text: " " + text });
-                        await new Promise(r => setTimeout(r, 200)); // 縮減緩衝
+                        console.log('  [CDP] Inserting text prefix...');
+                        await cdp.call('Input.insertText', { text: text + " " });
+                        await new Promise(r => setTimeout(r, 200));
                     }
 
-                    // 縮減穩定等待：圖片模式從 3s 降到 850ms (因為 JS 端已有輪詢)
-                    console.log('  [CDP] Finalizing send (Fast Path)...');
-                    await new Promise(r => setTimeout(r, 850));
+                    // 2. 穩定等待 (改為極短 100ms，因為 JS 端已經完成 Ready 偵測)
+                    await new Promise(r => setTimeout(r, 100));
 
-                    // 策略 1: CDP 物理坐標點擊
+                    // 3. 執行發送 - 策略 1: 物理坐標點擊
+                    let sentSuccessful = false;
                     if (val.rect) {
+                        console.log('  [CDP] Triggering hardware click...');
                         const mouseBase = { x: Math.floor(val.rect.x), y: Math.floor(val.rect.y), button: 'left', clickCount: 1 };
                         await cdp.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...mouseBase });
                         await new Promise(r => setTimeout(r, 30));
                         await cdp.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...mouseBase });
-                        return { ok: true, method: "cdp_physical_click_fast", logs: val.logs };
+
+                        // 快速驗證發送 (僅等待 200ms)
+                        await new Promise(r => setTimeout(r, 200));
+                        const checkRes = await cdp.call("Runtime.evaluate", {
+                            expression: `(document.querySelector('[data-lexical-editor="true"]')?.innerText || "").trim().length === 0`,
+                            returnByValue: true
+                        });
+                        if (checkRes.result?.value) sentSuccessful = true;
                     }
 
-                    // 策略 2: CDP 實體 Enter 備援
-                    const k = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, modifiers: 0 };
-                    await cdp.call('Input.dispatchKeyEvent', { type: 'keyDown', ...k });
-                    await new Promise(r => setTimeout(r, 30));
-                    await cdp.call('Input.dispatchKeyEvent', { type: 'keyUp', ...k });
+                    // 4. 強制視覺清空與備援 - 使用硬體模擬 Control+A + Backspace
+                    // 即使點擊看起來成功，如果編輯器還不空，我們立刻用硬體刪除戳它
+                    if (!sentSuccessful) {
+                        console.log('  [CDP] Executing Hardware Snap-Clear (Ctrl+A + Backspace)...');
+                        await cdp.call("Runtime.evaluate", { expression: `document.querySelector('[data-lexical-editor="true"]')?.focus()` });
 
-                    return { ok: true, method: "cdp_image_blind_ninja_v2_fast", logs: val.logs };
-                    await cdp.call('Input.dispatchKeyEvent', { type: 'keyDown', ...k });
-                    await new Promise(r => setTimeout(r, 50));
-                    await cdp.call('Input.dispatchKeyEvent', { type: 'keyUp', ...k });
+                        // 1. Control + A (全選)
+                        const ctrlMask = 2; // Control key modifier
+                        await cdp.call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: ctrlMask });
+                        await cdp.call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: ctrlMask });
 
-                    return { ok: true, method: "cdp_image_blind_ninja_v2", logs: val.logs };
+                        // 2. Backspace (刪除)
+                        await cdp.call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Backspace', windowsVirtualKeyCode: 8 });
+                        await cdp.call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Backspace', windowsVirtualKeyCode: 8 });
+
+                        // 3. 最後補一個 Enter 確保一定送出
+                        const kEnter = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 };
+                        await cdp.call('Input.dispatchKeyEvent', { type: 'keyDown', ...kEnter });
+                        await cdp.call('Input.dispatchKeyEvent', { type: 'keyUp', ...kEnter });
+                        sentSuccessful = true;
+                    }
+
+                    return { ok: true, method: sentSuccessful ? "cdp_fast_hardware_send" : "cdp_v4_legacy", logs: val.logs };
                 }
                 if (val) results.push(val);
             } catch (e) { }
