@@ -411,8 +411,14 @@ export async function injectImage(cdpList, base64Data, text = null) {
             log('Injecting Image...');
             target.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true, composed: true }));
             
-            // 稍作等待以確保 Lexical 分配了 DecoratorNode
-            await new Promise(r => setTimeout(r, 1000));
+            // 4. 改用輪詢偵測：一旦偵測到圖片產生就開始下一步 (Max 1s)
+            for (let i = 0; i < 10; i++) {
+                if (getImgStatus() > initialCount) {
+                    log('Image detected after ' + (i * 100) + 'ms');
+                    break;
+                }
+                await new Promise(r => setTimeout(r, 100));
+            }
 
             // 4. 發送按紐物理偵測 (不論有無按紐點擊，最後都交由 CDP 入口)
             const findSend = () => {
@@ -458,26 +464,29 @@ export async function injectImage(cdpList, base64Data, text = null) {
                     if (text) {
                         console.log('  [CDP] Inserting text via hardware bridge...');
                         await cdp.call('Input.insertText', { text: " " + text });
-                        await new Promise(r => setTimeout(r, 600)); // 增加緩衝以防衝突
+                        await new Promise(r => setTimeout(r, 200)); // 縮減緩衝
                     }
 
-                    // 等待 Lexical 解析與按鈕啟用
-                    console.log('  [CDP] Waiting for Lexical stability (3s)...');
-                    await new Promise(r => setTimeout(r, 3000));
+                    // 縮減穩定等待：圖片模式從 3s 降到 850ms (因為 JS 端已有輪詢)
+                    console.log('  [CDP] Finalizing send (Fast Path)...');
+                    await new Promise(r => setTimeout(r, 850));
 
-                    // 策略 1: CDP 物理坐標點擊 (最穩定的點擊法)
+                    // 策略 1: CDP 物理坐標點擊
                     if (val.rect) {
-                        console.log('  [CDP] Triggering physical mouse click at', val.rect);
                         const mouseBase = { x: Math.floor(val.rect.x), y: Math.floor(val.rect.y), button: 'left', clickCount: 1 };
                         await cdp.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...mouseBase });
-                        await new Promise(r => setTimeout(r, 50));
+                        await new Promise(r => setTimeout(r, 30));
                         await cdp.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...mouseBase });
-                        return { ok: true, method: "cdp_physical_click", logs: val.logs };
+                        return { ok: true, method: "cdp_physical_click_fast", logs: val.logs };
                     }
 
-                    // 策略 2: CDP 實體 Enter 備援 (同步 injectMessage 的成功參數)
-                    console.log('  [CDP] Triggering hardware Enter fallback...');
+                    // 策略 2: CDP 實體 Enter 備援
                     const k = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, modifiers: 0 };
+                    await cdp.call('Input.dispatchKeyEvent', { type: 'keyDown', ...k });
+                    await new Promise(r => setTimeout(r, 30));
+                    await cdp.call('Input.dispatchKeyEvent', { type: 'keyUp', ...k });
+
+                    return { ok: true, method: "cdp_image_blind_ninja_v2_fast", logs: val.logs };
                     await cdp.call('Input.dispatchKeyEvent', { type: 'keyDown', ...k });
                     await new Promise(r => setTimeout(r, 50));
                     await cdp.call('Input.dispatchKeyEvent', { type: 'keyUp', ...k });
