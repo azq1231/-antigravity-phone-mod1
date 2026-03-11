@@ -9,6 +9,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import WebSocket from 'ws';
+import net from 'net';
 
 import { activeConnections, getOrConnectParams } from './core/cdp_manager.js';
 import { captureSnapshot, injectScroll, getAppState } from './core/automation.js';
@@ -23,7 +24,7 @@ const packageJson = JSON.parse(fs.readFileSync(join(__dirname, 'package.json'), 
 const APP_VERSION = packageJson.version;
 
 const SERVER_PORT = 3004;
-const PORTS = [9000, 9001, 9002, 9003];
+const PORTS = [9000, 9001, 9002, 9003, 9222];
 
 process.on('uncaughtException', (err) => console.error('💥 [V4] Uncaught Exception:', err));
 process.on('unhandledRejection', (reason) => console.error('💥 [V4] Unhandled Rejection:', reason));
@@ -250,6 +251,22 @@ async function createServer() {
     });
 
     server.listen(SERVER_PORT, '0.0.0.0', () => console.log(`🚀 [V4-STABLE] Listening on http://localhost:${SERVER_PORT}`));
+
+    // --- 智能 CDP 橋接器 (已註解移除，避免潛在的 9222 資源衝突造成當機) ---
+    /*
+    const BRIDGE_PORT = 9222;
+    const cdpBridge = net.createServer(socket => {
+        const activeClients = Array.from(wss.clients).filter(c => c.readyState === WebSocket.OPEN);
+        const targetPort = (activeClients.length > 0 && activeClients[0].viewingPort) ? activeClients[0].viewingPort : 9001;
+        const target = net.createConnection(targetPort, '127.0.0.1');
+        socket.pipe(target).pipe(socket);
+        socket.on('error', () => target.destroy());
+        target.on('error', () => {
+            socket.destroy();
+        });
+    });
+    cdpBridge.listen(BRIDGE_PORT, '127.0.0.1');
+    */
 }
 
 createServer();

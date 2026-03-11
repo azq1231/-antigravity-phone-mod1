@@ -10,7 +10,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const router = express.Router();
-const PORTS = [9000, 9001, 9002, 9003];
+const PORTS = [9000, 9001, 9002, 9003, 9222];
 
 const pkg = JSON.parse(fs.readFileSync(join(__dirname, '..', 'package.json'), 'utf8'));
 const APP_VERSION = pkg.version;
@@ -26,9 +26,6 @@ router.post('/send', async (req, res) => {
         if (msgId) {
             const last = processedMsgIds.get(msgId);
             if (last && Date.now() - last < DEDUP_WINDOW) return res.json({ ok: true, ignored: true });
-            processedMsgIds.set(msgId, Date.now());
-            const now = Date.now();
-            for (const [id, time] of processedMsgIds) { if (now - time > DEDUP_WINDOW) processedMsgIds.delete(id); }
         }
 
         const conn = await getOrConnectParams(port);
@@ -44,11 +41,11 @@ router.post('/send', async (req, res) => {
             console.log('[API] Text injection result:', JSON.stringify(result));
         }
 
-        if (!result.ok && msgId) {
-            // Only delete if it's a structural error, not a potential successful "timeout" or "busy"
-            if (result.error === 'no_editor_found' || result.error === 'no_editor_in_context') {
-                processedMsgIds.delete(msgId);
-            }
+        if (result.ok && msgId) {
+            processedMsgIds.set(msgId, Date.now());
+            // Cleanup old IDs
+            const now = Date.now();
+            for (const [id, time] of processedMsgIds) { if (now - time > DEDUP_WINDOW) processedMsgIds.delete(id); }
         }
         res.json(result);
     } catch (e) {

@@ -1,0 +1,10 @@
+Windows Registry Editor Version 5.00
+
+; 修復 .bat 檔案關聯：使用 conhost.exe 執行，避免 Windows Terminal 透明視窗問題
+; 使用方法：右鍵此檔案 -> 合併 (需要管理員確認)
+
+[HKEY_CLASSES_ROOT\batfile\shell\open\command]
+@="C:\\Windows\\System32\\conhost.exe cmd.exe /c \"%1\" %*"
+
+[HKEY_CLASSES_ROOT\cmdfile\shell\open\command]
+@="C:\\Windows\\System32\\conhost.exe cmd.exe /c \"%1\" %*"

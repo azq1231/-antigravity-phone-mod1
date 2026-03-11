@@ -307,50 +307,89 @@ return { success: true, newScrollTop: target.scrollTop, scrollHeight: target.scr
 }
 
 export async function injectMessage(cdpList, text, force = false) {
-    const EXPRESSION_CHECK = `(async () => {
-    const cancel = document.querySelector('button[data-tooltip-id="input-send-button-cancel-tooltip"]');
-    const stopBtn = document.querySelector('button svg.lucide-square, svg.lucide-circle-stop')?.closest('button');
-    const busyEl = cancel || stopBtn;
-    if (!${force} && busyEl && busyEl.offsetParent !== null && busyEl.offsetHeight > 0) return { ok: false, reason: "busy" };
+    const CHECK_SCRIPT = `(async () => {
+        const cancel = document.querySelector('button[data-tooltip-id="input-send-button-cancel-tooltip"]');
+        const stopBtn = document.querySelector('button svg.lucide-square, svg.lucide-circle-stop')?.closest('button');
+        const busyEl = cancel || stopBtn;
+        if (!${force} && busyEl && !!busyEl.offsetParent && busyEl.offsetHeight > 0) return { ok: false, reason: "busy" };
 
-    const editors = [...document.querySelectorAll('[data-lexical-editor="true"][contenteditable="true"]')].filter(el => el.offsetParent !== null);
-    const editor = editors.at(-1);
-    if (!editor) return { ok: false, error: "editor_not_found" };
+        const editors = [...document.querySelectorAll('[data-lexical-editor="true"]')].filter(el => !!el.offsetParent);
+        if (editors.length === 0) return { ok: false, error: "no_editor" };
+        
+        const editor = editors[editors.length - 1];
+        editor.focus();
 
-    // Nuclear Clear Check
-    editor.focus();
-    try {
-        editor.innerHTML = '<p dir="ltr"><br></p>'; 
-        document.execCommand("selectAll", false, null);
-        document.execCommand("delete", false, null);
-    } catch(e) {}
-    
-    return { ok: true, ready: true };
-})()`;
+        // 徹底清空並避免 TrustedHTML 限制
+        while (editor.firstChild) {
+            editor.removeChild(editor.firstChild);
+        }
+        const p = document.createElement('p');
+        p.setAttribute('dir', 'ltr');
+        p.appendChild(document.createElement('br'));
+        editor.appendChild(p);
+
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+        return { ok: true };
+    })()`;
 
     for (const cdp of cdpList) {
-        const ctxIds = cdp.contexts.length > 0 ? cdp.contexts.map(c => c.id) : [undefined];
-        for (const ctxId of ctxIds) {
+        // 優先嘗試所有 contexts，加上 undefined (主環境)
+        const contexts = [undefined, ...cdp.contexts.map(c => c.id)];
+        
+        for (const ctxId of contexts) {
             try {
-                // 1. JS 階段：檢查狀態、對焦並清空輸入框
-                const params = { expression: EXPRESSION_CHECK, returnByValue: true, awaitPromise: true };
+                const params = { expression: CHECK_SCRIPT, returnByValue: true, awaitPromise: true };
                 if (ctxId !== undefined) params.contextId = ctxId;
-                const res = await cdp.call("Runtime.evaluate", params);
+                
+                const checkRes = await cdp.call("Runtime.evaluate", params);
 
-                if (res.result?.value?.reason === 'busy') return res.result.value;
-                if (res.result?.value?.ready) {
+                if (checkRes?.result?.value?.reason === 'busy') return checkRes.result.value;
 
-                    // 2. CDP 底層階段：發送純文字 (徹底防止重複與 React 干擾)
+                if (checkRes?.result?.value?.ok) {
+                    // FOUND!
                     await cdp.call('Input.insertText', { text: text });
+                    await new Promise(r => setTimeout(r, 100));
 
-                    await new Promise(r => setTimeout(r, 150));
-
-                    // 3. CDP 底層階段：發送實體 Enter (無效化所有防護盾的終極點擊)
+                    // 同步狀態
+                    await cdp.call("Runtime.evaluate", { 
+                        expression: `(() => {
+                            const editor = [...document.querySelectorAll('[data-lexical-editor="true"]')].at(-1);
+                            if (editor) {
+                                editor.dispatchEvent(new Event('input', { bubbles: true }));
+                                editor.dispatchEvent(new Event('change', { bubbles: true }));
+                            }
+                        })()`,
+                        contextId: ctxId
+                    });
+                    
+                    await new Promise(r => setTimeout(r, 100));
+                    
+                    // Enter
                     await cdp.call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
                     await new Promise(r => setTimeout(r, 20));
                     await cdp.call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
+                    
+                    // Fallback Click
+                    await new Promise(r => setTimeout(r, 600));
+                    const fallbackRes = await cdp.call("Runtime.evaluate", {
+                        expression: `(() => {
+                            const editor = [...document.querySelectorAll('[data-lexical-editor="true"]')].at(-1);
+                            if (editor && editor.innerText.trim().length > 0) {
+                                const btn = document.querySelector('button[data-tooltip-id*="send"]') || 
+                                            Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Send') || b.ariaLabel?.includes('Send'));
+                                if (btn && !btn.disabled) {
+                                    btn.click();
+                                    return "clicked_fallback";
+                                }
+                                return "text_not_cleared_but_no_button";
+                            }
+                            return "cleared";
+                        })()`,
+                        returnByValue: true,
+                        contextId: ctxId
+                    });
 
-                    return { ok: true, method: "cdp_input_enter" };
+                    return { ok: true, method: "cdp_v4_smart_send", status: fallbackRes?.result?.value };
                 }
             } catch (e) { }
         }
@@ -367,8 +406,8 @@ export async function injectImage(cdpList, base64Data, text = null) {
         const log = (m) => logs.push(\`[\${new Date().toISOString().split('T')[1]}] \${m}\`);
 
         try {
-            let editors = [...document.querySelectorAll('[data-lexical-editor="true"][contenteditable="true"]')].filter(el => el.offsetParent !== null);
-            let target = editors.at(-1);
+            let editors = [...document.querySelectorAll('[data-lexical-editor="true"]')].filter(el => !!el.offsetParent);
+            let target = editors[editors.length - 1];
 
             if (!target) {
                 let candidates = Array.from(document.querySelectorAll('[contenteditable="true"], textarea, [role="textbox"]'))
@@ -478,8 +517,8 @@ export async function injectImage(cdpList, base64Data, text = null) {
     })()`;
 
     for (const cdp of cdpList) {
-        const ctxIds = cdp.contexts.length > 0 ? cdp.contexts.map(c => c.id) : [undefined];
-        for (const ctxId of ctxIds) {
+        const contexts = [undefined, ...cdp.contexts.map(c => c.id)];
+        for (const ctxId of contexts) {
             try {
                 const params = { expression: EXPRESSION, returnByValue: true, awaitPromise: true };
                 if (ctxId !== undefined) params.contextId = ctxId;
@@ -488,9 +527,20 @@ export async function injectImage(cdpList, base64Data, text = null) {
 
                 if (val && val.readyForCdp) {
                     // 1. 物理輸入文字前綴 (Lexical 兼容性較佳)
+
                     if (text) {
                         console.log('  [CDP] Inserting text prefix...');
                         await cdp.call('Input.insertText', { text: text + " " });
+                        await cdp.call("Runtime.evaluate", { 
+                            expression: `(() => {
+                                const editor = [...document.querySelectorAll('[data-lexical-editor="true"]')].at(-1);
+                                if (editor) {
+                                    editor.dispatchEvent(new Event('input', { bubbles: true }));
+                                    editor.dispatchEvent(new Event('change', { bubbles: true }));
+                                }
+                            })()`,
+                            contextId: ctxId
+                        });
                         await new Promise(r => setTimeout(r, 200));
                     }
 

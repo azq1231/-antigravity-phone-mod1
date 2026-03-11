@@ -1,7 +1,7 @@
 import WebSocket from 'ws';
 import { getJson, isPortInUse } from './utils.js';
 
-const PORTS = [9000, 9001, 9002, 9003];
+const PORTS = [9000, 9001, 9002, 9003, 9222];
 export const activeConnections = new Map();
 export const connectionLocks = new Map();
 

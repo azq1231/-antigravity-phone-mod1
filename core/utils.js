@@ -21,13 +21,19 @@ export function simpleHash(str) {
     return hash.toString(16);
 }
 
+
 export function getJson(url) {
     return new Promise((resolve, reject) => {
-        http.get(url, (res) => {
+        const req = http.get(url, (res) => {
             let data = '';
             res.on('data', chunk => data += chunk);
             res.on('end', () => { try { resolve(JSON.parse(data)); } catch (e) { reject(e); } });
-        }).on('error', reject);
+        });
+        req.on('error', reject);
+        req.setTimeout(2000, () => {
+            req.destroy();
+            reject(new Error('Request timeout: ' + url));
+        });
     });
 }
 
