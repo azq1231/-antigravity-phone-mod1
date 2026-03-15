@@ -597,130 +597,269 @@ export async function injectImage(cdpList, base64Data, text = null) {
     return { ok: false, error: "no_editor_found_all_contexts", results: results };
 }
 
-export async function getDetailedUsage(cdpList) {
-    const SCRIPT = `(async () => {
-    const labels = Array.from(document.querySelectorAll('.statusbar-item-label, .statusbar-item a, .statusbar-item span, .statusbar-item')).filter(el => {
-        const t = (el.innerText || "").trim();
-        return t.includes('%') && el.offsetParent !== null;
-    });
+export async function getDetailedUsage(cdpList, port = 9001) {
+    const { getOrConnectParams } = await import('./cdp_manager.js');
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-    const allAriaLabels = [];
-    let firstTargetLabel = null;
+    const EXTRACT_SCRIPT = `(async () => {
+        const getGroupKey = (name) => {
+            const n = (name || "").toLowerCase();
+            if (n.includes('flash')) return "Gemini 3 Flash";
+            if (n.includes('pro')) return "Gemini 3 Pro (H/L)";
+            if (n.includes('gpt') || n.includes('claude') || n.includes('4o')) return "Claude / GPT-4o";
+            return name;
+        };
 
-    for (const l of labels) {
-        let el = l;
-        while (el && !el.classList?.contains('statusbar-item')) {
-            if (el.parentElement) el = el.parentElement;
-            else break;
-        }
-        if (el) {
-            const aria = el.getAttribute('aria-label') || el.querySelector('[aria-label]')?.getAttribute('aria-label') || "";
-            if (aria.includes('配額') || aria.includes('100%') || aria.includes('%')) {
-                allAriaLabels.push(aria);
-                if (!firstTargetLabel) firstTargetLabel = l;
-            }
-        }
-    }
-
-    if (allAriaLabels.length === 0) {
+        // --- Aria label extraction (for status bar) ---
+        const labels = Array.from(document.querySelectorAll('.statusbar-item-label, .statusbar-item a, .statusbar-item span, .statusbar-item')).filter(el => {
+            const t = (el.innerText || "").trim();
+            return t.includes('%') && el.offsetParent !== null;
+        });
+        const allAriaLabels = [];
         for (const l of labels) {
-            const aria = l.getAttribute('aria-label') || l.title || "";
-            if (aria.includes('%')) {
-                allAriaLabels.push(aria);
-                if (!firstTargetLabel) firstTargetLabel = l;
+            let el = l;
+            while (el && !el.classList?.contains('statusbar-item')) {
+                if (el.parentElement) el = el.parentElement; else break;
+            }
+            if (el) {
+                const aria = el.getAttribute('aria-label') || el.querySelector('[aria-label]')?.getAttribute('aria-label') || "";
+                if (aria) allAriaLabels.push(aria);
             }
         }
-    }
 
-    if (allAriaLabels.length === 0 && !firstTargetLabel) return { error: 'Label not found' };
-
-    const rawResults = {};
-    let found = false;
-
-    allAriaLabels.forEach(ariaLabel => {
-        // 1. Process markdown table rows
-        const regex = /[|] .*?[*][*]([^*]+)[*][*] [|] .*? [|] ([0-9.]+)%[^0-9]*?([0-9hms ]+)[(]([^)]+)[)] [|]/g;
-        let match;
-        while ((match = regex.exec(ariaLabel)) !== null) {
-            found = true;
-            rawResults[match[1].trim()] = {
-                percent: match[2].trim() + "%",
-                countdown: match[3].trim(),
-                eta: match[4].trim()
-            };
-        }
-
-        // 2. Process basic lines (fallback)
-        const lines = ariaLabel.split('\\n');
-        for (const line of lines) {
-            if (line.includes('%') && (line.includes('→') || line.includes('|'))) {
-                const parts = line.split('|');
-                if (parts.length >= 4) {
-                    const namePart = parts[1].replace(/\\*/g, '').replace('🟢', '').trim();
-                    if (namePart && (!rawResults[namePart] || rawResults[namePart].eta === 'N/A')) {
-                        const valPart = parts[3].trim();
-                        const m = valPart.match(/([0-9.]+)%.*?([0-9hms ]+)[(]([^)]+)[)]/);
-                        if (m) {
-                            rawResults[namePart] = { percent: m[1] + "%", countdown: m[2].trim(), eta: m[3].trim() };
-                            found = true;
+        const rawResults = {};
+        allAriaLabels.forEach(ariaLabel => {
+            const regexTable = /[|] .*?[*][*]([^*]+)[*][*] [|] .*? [|] ([0-9.]+)%[^0-9]*?([0-9hms ]+)[(]([^)]+)[)] [|]/g;
+            let match;
+            while ((match = regexTable.exec(ariaLabel)) !== null) {
+                rawResults[match[1].trim()] = { percent: match[2].trim() + "%", countdown: match[3].trim(), eta: match[4].trim() };
+            }
+            const lines = ariaLabel.split('\\n');
+            for (const line of lines) {
+                if (line.includes('%') && (line.includes('→') || line.includes('|'))) {
+                    const parts = line.split('|');
+                    if (parts.length >= 4) {
+                        const namePart = parts[1].replace(/\\*/g, '').replace('🟢', '').trim();
+                        if (namePart && (!rawResults[namePart] || rawResults[namePart].countdown === 'N/A')) {
+                            const m = parts[3].trim().match(/([0-9.]+)%.*?([0-9hms ]+)[(]([^)]+)[)]/);
+                            if (m) rawResults[namePart] = { percent: m[1] + "%", countdown: m[2].trim(), eta: m[3].trim() };
                         }
                     }
                 }
             }
-        }
-    });
-
-    // 3. Logic: Grouping and merging
-    const grouped = {};
-    const getGroupKey = (name) => {
-        const n = name.toLowerCase();
-        if (n.includes('flash')) return "Gemini 3 Flash";
-        if (n.includes('pro')) return "Gemini 3 Pro (H/L)";
-        if (n.includes('gpt') || n.includes('claude') || n.includes('4o')) return "Claude / GPT-4o";
-        return name; // Keep others as is
-    };
-
-    Object.keys(rawResults).forEach(name => {
-        const key = getGroupKey(name);
-        const data = rawResults[name];
-        // If group already has data, prioritize the one with better info (non-N/A)
-        if (!grouped[key] || (grouped[key].eta === 'N/A' && data.eta !== 'N/A')) {
-            grouped[key] = data;
-        }
-    });
-
-    if (found) return { success: true, data: grouped };
-
-    // Final fallback: use visible text from label
-    if (firstTargetLabel) {
-        const rawText = (firstTargetLabel.innerText || "").replace(/\\s+/g, ' ');
-        const parseLine = rawText.split('|').map(p => p.trim());
-        const fallbackResults = {};
-        parseLine.forEach(p => {
-            const kv = p.split(':');
-            if (kv.length >= 2) {
-                const name = kv[0].replace('🟢', '').trim();
-                const key = getGroupKey(name);
-                fallbackResults[key] = { percent: kv[1].trim(), countdown: 'N/A', eta: 'N/A' };
-                found = true;
-            }
         });
-        if (found) return { success: true, data: fallbackResults };
+
+        const finalData = {};
+        Object.keys(rawResults).forEach(name => {
+            const key = getGroupKey(name);
+            if (!finalData[key] || (finalData[key].countdown === 'N/A' && rawResults[name].countdown !== 'N/A')) finalData[key] = rawResults[name];
+        });
+
+        // --- Settings window: "Refreshes in" or "80% 3h 49m" extraction (Robust) ---
+        const pageText = document.body.innerText || "";
+        const lines = pageText.split('\n').map(l => l.trim()).filter(l => l);
+        
+        // 嘗試捕獲拼接格式: "Gemini 3 Flash80% 3h 49m"
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const mConcat = line.match(/(.*?)([0-9.]+)%\s*([0-9d hms,]+)/i);
+            if (mConcat) {
+                const name = mConcat[1].trim();
+                const key = getGroupKey(name);
+                if (key && name.length < 50) {
+                     finalData[key] = { percent: mConcat[2] + "%", countdown: mConcat[3].trim(), eta: "N/A" };
+                     continue; // 優先處理拼接格式
+                }
+            }
+            
+            if (line.includes('Refreshes in')) {
+                const modelName = lines[i-1] || "Unknown";
+                const match = line.match(/Refreshes in (\\d+) hours?, (\\d+) minutes?/i) || 
+                              line.match(/Refreshes in (\\d+) minutes?/i);
+                if (match) {
+                    const key = getGroupKey(modelName);
+                    const countdown = match.length === 3 ? (match[1] + "h " + match[2] + "m") : (match[1] + "m");
+                    if (!finalData[key] || finalData[key].countdown === 'N/A') {
+                        finalData[key] = { percent: "Usage Only", countdown, eta: "N/A" };
+                    }
+                }
+            }
+        }
+        const hasData = Object.keys(finalData).length > 0;
+        return { success: hasData, data: finalData };
+    })()`;
+
+    const GET_STATUS_BAR_COORDS = `(() => {
+        const forbidden = ['TEXTAREA', 'INPUT', 'SCRIPT', 'STYLE'];
+        const els = Array.from(document.querySelectorAll('*')).filter(e => {
+            if (forbidden.includes(e.tagName)) return false;
+            const label = ((e.getAttribute('aria-label') || '') + ' ' + (e.innerText || '')).toLowerCase();
+            return label.includes('antigravity') || label.includes('auto accept') || label.includes('background');
+        });
+        els.sort((a, b) => {
+            const isA = a.classList.contains('statusbar-item') || a.closest('.statusbar-item');
+            const isB = b.classList.contains('statusbar-item') || b.closest('.statusbar-item');
+            if (isA && !isB) return -1;
+            if (!isA && isB) return 1;
+            const ra = a.getBoundingClientRect();
+            const rb = b.getBoundingClientRect();
+            return (ra.width * ra.height) - (rb.width * rb.height);
+        });
+        const target = els.find(e => {
+            if (e.tagName === 'BODY' || e.tagName === 'HTML') return false;
+            const rect = e.getBoundingClientRect();
+            return rect.width > 2 && rect.height > 2; 
+        });
+        if (target) {
+            const rect = target.getBoundingClientRect();
+            return { x: Math.floor(rect.x + rect.width / 2), y: Math.floor(rect.y + rect.height / 2) };
+        }
+        return null;
+    })()`;
+
+    const GET_ADVANCED_COORDS = `(() => {
+        const forbidden = ['TEXTAREA', 'INPUT', 'SCRIPT', 'STYLE'];
+        const els = Array.from(document.querySelectorAll('*')).filter(el => {
+            if (forbidden.includes(el.tagName)) return false;
+            return el.innerText && el.innerText.trim() === 'Advanced Settings';
+        });
+        els.sort((a, b) => {
+            const ra = a.getBoundingClientRect();
+            const rb = b.getBoundingClientRect();
+            return (ra.width * ra.height) - (rb.width * rb.height);
+        });
+        const target = els.find(el => {
+            const rect = el.getBoundingClientRect();
+            return rect.width > 2 && rect.height > 2 && rect.width < 400;
+        });
+        if (target) {
+            const rect = target.getBoundingClientRect();
+            return { x: Math.floor(rect.x + rect.width / 2), y: Math.floor(rect.y + rect.height / 2) };
+        }
+        return null;
+    })()`;
+
+    const GET_MODELS_COORDS = `(() => {
+        const els = Array.from(document.querySelectorAll('*')).filter(e => {
+            const t = (e.innerText || "").trim();
+            return t === 'Models' || (t.includes('Models') && t.length < 15);
+        });
+        els.sort((a, b) => {
+            const ra = a.getBoundingClientRect();
+            const rb = b.getBoundingClientRect();
+            return (ra.width * ra.height) - (rb.width * rb.height);
+        });
+        const target = els.find(e => {
+            const rect = e.getBoundingClientRect();
+            return rect.width > 2 && rect.height > 2;
+        });
+        if (target) {
+            const rect = target.getBoundingClientRect();
+            return { x: Math.floor(rect.x + rect.width / 2), y: Math.floor(rect.y + rect.height / 2) };
+        }
+        return null;
+    })()`;
+
+    async function evalDirect(cdp, script) {
+        try {
+            const res = await cdp.call("Runtime.evaluate", { expression: script, returnByValue: true, awaitPromise: true }).catch(() => null);
+            let val = res?.result?.value;
+            if (val?.success && val?.data) return { success: true, data: val.data };
+            for (const ctx of (cdp.contexts || [])) {
+                const resC = await cdp.call("Runtime.evaluate", { expression: script, returnByValue: true, awaitPromise: true, contextId: ctx.id }).catch(() => null);
+                let valC = resC?.result?.value;
+                if (valC?.success && valC?.data) return { success: true, data: valC.data };
+            }
+        } catch (e) {}
+        return null;
     }
 
-    return { error: 'No data matches found' };
-})()`;
+    async function physicalClick(cdp, script) {
+        let coords = null;
+        try {
+            const res = await cdp.call("Runtime.evaluate", { expression: script, returnByValue: true }).catch(() => null);
+            if (res?.result?.value?.x) coords = res.result.value;
+        } catch (e) {}
+        if (!coords) {
+            for (const ctx of (cdp.contexts || [])) {
+                try {
+                    const res = await cdp.call("Runtime.evaluate", { expression: script, returnByValue: true, contextId: ctx.id }).catch(() => null);
+                    if (res?.result?.value?.x) {
+                        coords = res.result.value;
+                        break;
+                    }
+                } catch (e) {}
+            }
+        }
+        if (coords && coords.x && coords.y) {
+            await cdp.call('Input.dispatchMouseEvent', { type: 'mousePressed', x: coords.x, y: coords.y, button: 'left', clickCount: 1 });
+            await cdp.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: coords.x, y: coords.y, button: 'left', clickCount: 1 });
+            return true;
+        }
+        return false;
+    }
 
+    // --- PHASE 1: Try current targets ---
     for (const cdp of cdpList) {
-        for (const ctx of cdp.contexts) {
-            try {
-                const res = await cdp.call("Runtime.evaluate", { expression: SCRIPT, returnByValue: true, awaitPromise: true, contextId: ctx.id });
-                if (res.result?.value?.success) return res.result.value;
-            } catch (e) { }
+        const result = await evalDirect(cdp, EXTRACT_SCRIPT);
+        if (result?.success) return result;
+    }
+
+    // --- PHASE 2: Trigger Settings ---
+    let freshConns = await getOrConnectParams(port, true).catch(() => cdpList);
+    let settingsTarget = freshConns.find(c => c.title === 'Settings');
+
+    if (settingsTarget) {
+        for (let i = 0; i < 2; i++) {
+            await physicalClick(settingsTarget, GET_MODELS_COORDS);
+            await sleep(1500);
+            const result = await evalDirect(settingsTarget, EXTRACT_SCRIPT);
+            if (result?.success) return result;
         }
     }
-    return { error: 'Failed' };
+
+    const workbench = freshConns.find(c => c.title.includes('Antigravity') || (c.title && c.title.includes('ubuntu')) || (c.title && c.title.includes('rocket')));
+    if (!workbench) return { success: false, error: 'No workbench found' };
+
+    let triggered = false;
+    for (let i = 0; i < 3; i++) {
+        if (await physicalClick(workbench, GET_STATUS_BAR_COORDS)) {
+            await sleep(2000);
+            for (let j = 0; j < 3; j++) {
+                if (await physicalClick(workbench, GET_ADVANCED_COORDS)) {
+                    triggered = true;
+                    await sleep(4000);
+                    break;
+                }
+                await sleep(1000);
+            }
+        }
+        if (triggered) break;
+        await sleep(2000);
+    }
+
+    // Reconnect to find spawned Settings
+    for (let r = 0; r < 6; r++) {
+        await sleep(1000);
+        freshConns = await getOrConnectParams(port, true).catch(() => freshConns);
+        settingsTarget = freshConns.find(c => c.title === 'Settings');
+        if (settingsTarget) break;
+    }
+
+    // Final navigation and extraction
+    for (let r = 0; r < 5; r++) {
+        const clicked = await physicalClick(settingsTarget, GET_MODELS_COORDS);
+        await sleep(2000); // Wait for load
+        const result = await evalDirect(settingsTarget, EXTRACT_SCRIPT);
+        if (result?.success) return result;
+        
+        // If not successful, try to click again or wait more
+        if (!clicked) await sleep(1000);
+    }
+
+    return { success: false, error: 'Extraction failed after trigger' };
 }
+
 
 export async function openUsageDialog(cdpList) {
     const SCRIPT = `(() => {
@@ -749,121 +888,85 @@ export async function openUsageDialog(cdpList) {
 }
 
 export async function getAppState(cdpList) {
+    // CRITICAL: A server restart (node scripts/reboot.js) is MANDATORY after modifying core/*.js files.
     let bestState = { mode: 'Unknown', model: 'Unknown', usage: '', title: '' };
+    
+    // 優先選取包含 [WSL] 或具有專案特徵的 Workbench，避免選到背景輔助視窗
+    const targetCdp = cdpList.find(c => c.title && c.title.includes(' [WSL:')) || // Port 9001 特徵
+                      cdpList.find(c => c.title && !/Launchpad|Monitor|server|package|json|Extension|Terminal/i.test(c.title)) || 
+                      cdpList.find(c => c.title && c.title !== 'Settings') ||
+                      cdpList[0];
+
+    if (!targetCdp) return bestState;
+    
+    // 1. 標題：顯示資料夾名稱 (專案名)
+    let rawTitle = targetCdp.title || "";
+    bestState.title = rawTitle.split(' - ')[0].replace(/ \[WSL:.*\]/, "").trim();
 
     const EXP = `(async () => {
     try {
-        const state = { mode: 'Unknown', model: 'Unknown', usage: '', title: document.title || "" };
+        const state = { mode: 'Unknown', model: 'Unknown', usage: '', title: (document.title || "").split(' - ')[0].replace(/ \\[WSL:.*\\]/, "").trim() };
+        const isForbidden = (el) => el.closest('.monaco-editor, .view-lines, .terminal-container, .notifications-toasts');
 
-        // 定義禁區：編輯器、終端機、輸出視窗、通知區 (避免抓到 log 或代碼)
-        const isForbidden = (el) => {
-            return el.closest('.monaco-editor, .view-lines, .terminal-container, .part.panel, .notifications-toasts');
-        };
-
-        // 1. 精確定位：模型名稱與模式切換按鈕
-        const toolbar = document.querySelector('.flex.items-center.gap-0-5, [class*="items-center"][class*="gap-0.5"]');
-        if (toolbar) {
-            const allItems = Array.from(toolbar.querySelectorAll('span, div')).filter(el => {
-                return el.children.length === 0 && !isForbidden(el);
-            });
+        // 1. 偵測狀態列 (通用的狀態抓取)
+        const statusItems = Array.from(document.querySelectorAll('.statusbar-item'));
+        for (const item of statusItems) {
+            if (isForbidden(item)) continue;
+            const t = (item.innerText || "").trim();
+            const aria = (item.getAttribute('aria-label') || "").trim();
+            const combined = (t + " " + aria).toLowerCase();
 
             // 模式 (Fast/Planning)
-            const modeNode = allItems.find(el => {
-                const t = (el.innerText || "").trim();
-                return t === 'Fast' || t === 'Planning';
-            });
-            if (modeNode) state.mode = modeNode.innerText.trim();
-
-            // 模型 (長度優先，且不得超過 50 字)
-            const modelCandidates = allItems.filter(el => {
-                const t = (el.innerText || "").trim();
-                return t.length < 50 && ["Gemini", "Claude", "GPT", "o1", "Sonnet"].some(k => t.includes(k)) && !t.includes('%');
-            });
-            if (modelCandidates.length > 0) {
-                const sorted = modelCandidates.sort((a, b) => b.innerText.trim().length - a.innerText.trim().length);
-                state.model = sorted[0].innerText.trim();
-            }
-        }
-
-        // 2. 狀態列偵測 (用量)
-        const statusItems = Array.from(document.querySelectorAll('.part.statusbar .statusbar-item'));
-        if (statusItems.length > 0) {
-            const usageItem = statusItems.find(el => {
-                if (isForbidden(el)) return false;
-                const t = (el.innerText || "").trim();
-                return t.length < 200 && (t.includes('GP:') || t.includes('Group 1:') || t.includes('%')) && t.includes('|') && t.includes('%');
-            });
-            if (usageItem) state.usage = usageItem.innerText.trim();
-        }
-
-        // 3. 全局備援 (嚴格限制長度與禁區)
-        if (state.model === 'Unknown') {
-            const fallbackModel = Array.from(document.querySelectorAll('span, div')).find(el => {
-                const t = (el.innerText || "").trim();
-                if (el.children.length > 0 || t.length > 50 || isForbidden(el)) return false;
-                return (t.includes('Gemini') || t.includes('Claude')) && !t.includes('|');
-            });
-            if (fallbackModel) state.model = fallbackModel.innerText.trim();
-        }
-
-        if (state.mode === 'Unknown') {
-            const fallbackMode = Array.from(document.querySelectorAll('span, div, button, .statusbar-item, [aria-label]')).find(el => {
-                if (isForbidden(el)) return false;
-                if (el.children.length > 0 && !el.getAttribute('aria-label')) return false;
-                const t = (el.innerText || "").trim();
-                const label = el.getAttribute('aria-label') || "";
-                return t === 'Fast' || t === 'Planning' || label.includes('Speed: Fast') || label.includes('Speed: Planning');
-            });
-            if (fallbackMode) {
-                const t = (fallbackMode.innerText || "").trim();
+            if (state.mode === 'Unknown') {
                 if (t === 'Fast' || t === 'Planning') state.mode = t;
-                else if (fallbackMode.getAttribute('aria-label')) state.mode = fallbackMode.getAttribute('aria-label').includes('Fast') ? 'Fast' : 'Planning';
+                else if (aria.includes('Speed: Fast') || t === '⚡ ON') state.mode = 'Fast';
+                else if (aria.includes('Speed: Planning')) state.mode = 'Planning';
+            }
+
+            // 模型
+            if (state.model === 'Unknown') {
+                if (combined.includes('gemini')) state.model = 'Gemini 3 Flash';
+                else if (combined.includes('claude')) state.model = 'Claude 3.5 Sonnet';
+                else if (combined.includes('gpt')) state.model = 'GPT-4o';
+            }
+
+            // 用量 (統一 9000/9001 邏輯：必須包含 %，排除垃圾文字)
+            if (state.usage === '' && !combined.includes('rocket') && !combined.includes('gitlens')) {
+                if (aria.includes('%') && (aria.includes('|') || aria.includes(':'))) {
+                    state.usage = aria;
+                } else if (t.includes('%') && (t.includes('|') || t.includes(':'))) {
+                    state.usage = t;
+                }
             }
         }
 
-        // 4. 定位用量標籤 (單獨抓取文字，供 UI 點擊使用)
-        const usageLabels = Array.from(document.querySelectorAll('.statusbar-item-label, .statusbar-item a, .statusbar-item span, .statusbar-item')).filter(el => {
-            const t = (el.innerText || "").trim();
-            // Match generic quota string with percentages and separators
-            return t.includes('%') && t.includes('|') && el.offsetParent !== null;
-        });
-        // Prefer longer strings to capture the full combo (e.g. GP: 100% | GF: 100%)
-        usageLabels.sort((a, b) => b.innerText.length - a.innerText.length);
-        const usageLabel = usageLabels[0];
-        if (usageLabel) state.usageText = usageLabel.innerText.trim();
-        else if (state.usage) state.usageText = state.usage;
+        // 2. 模式 Toolbar 備援 (Port 9001 必須依靠此處)
+        if (state.mode === 'Unknown') {
+            const toolbar = document.querySelector('.flex.items-center.gap-0-5, [class*="items-center"][class*="gap-0.5"]');
+            if (toolbar) {
+                const txt = toolbar.innerText || "";
+                if (txt.includes('Planning')) state.mode = 'Planning';
+                else state.mode = 'Fast';
+            }
+        }
 
         return state;
     } catch (e) { return { error: e.toString() }; }
 })()`;
 
-    for (const cdp of cdpList) {
-        const ctxIds = (cdp.contexts && cdp.contexts.length > 0) ? cdp.contexts.map(c => c.id) : [undefined];
-        for (const ctxId of ctxIds) {
-            try {
-                const params = { expression: EXP, returnByValue: true, awaitPromise: true };
-                if (ctxId !== undefined) params.contextId = ctxId;
-                const res = await cdp.call("Runtime.evaluate", params);
-                const val = res.result?.value;
-                if (val && !val.error) {
-                    if (val.title && val.title.includes(' - ')) bestState.title = val.title.split(' - ')[0].trim();
-                    else if (val.title && !bestState.title) bestState.title = val.title;
-
-                    if (val.mode !== 'Unknown') bestState.mode = val.mode;
-                    if (val.model !== 'Unknown') bestState.model = val.model;
-                    if (val.usage) bestState.usage = val.usage;
-
-                    // 如果在這個 Context 抓到了關鍵資訊，就判斷是否足夠
-                    if (bestState.mode !== 'Unknown' && bestState.model !== 'Unknown' && bestState.usage) {
-                        return bestState;
-                    }
-                }
-            } catch (e) { }
+    const ctxId = (targetCdp.contexts && targetCdp.contexts.length > 0) ? targetCdp.contexts[0].id : undefined;
+    try {
+        const params = { expression: EXP, returnByValue: true, awaitPromise: true };
+        if (ctxId !== undefined) params.contextId = ctxId;
+        const res = await targetCdp.call("Runtime.evaluate", params);
+        const val = res.result?.value;
+        if (val && !val.error) {
+            if (val.mode !== 'Unknown') bestState.mode = val.mode;
+            if (val.model !== 'Unknown') bestState.model = val.model;
+            if (val.usage) bestState.usage = val.usage;
         }
-    }
+    } catch (e) { }
 
-    // 如果完全沒抓到有效資訊，回傳 null 觸發伺服器緩存
-    if (bestState.mode === 'Unknown' && bestState.model === 'Unknown') return null;
     return bestState;
 }
 
