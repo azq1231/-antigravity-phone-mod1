@@ -13,7 +13,7 @@ export async function findAllInstances() {
             if (!inUse) continue;
             const list = await getJson(`http://127.0.0.1:${port}/json`);
 
-            const pages = list.filter(t => (t.type === 'page' || t.type === 'webview' || t.type === 'iframe') && t.webSocketDebuggerUrl);
+            const pages = list.filter(t => (t.type === 'page' || t.type === 'webview' || t.type === 'iframe' || t.type === 'background_page') && t.webSocketDebuggerUrl);
 
             if (pages.length > 0) {
                 // 智慧型視窗篩選：優先尋找真正的專案視窗
@@ -111,7 +111,10 @@ export async function connectCDP(url) {
 }
 
 export async function getOrConnectParams(port, forceReconnect = false) {
-    if (activeConnections.has(port) && !forceReconnect) {
+    if (forceReconnect) {
+        activeConnections.delete(port);
+        connectionLocks.delete(port);
+    } else if (activeConnections.has(port)) {
         const conns = activeConnections.get(port);
         const valid = conns.filter(c => c.ws.readyState === WebSocket.OPEN);
         if (valid.length > 0) {
