@@ -142,8 +142,8 @@ async function createServer() {
                     if (parsedUsage && parsedUsage.includes('|')) {
                         parsedUsage = parsedUsage.split('|')[0].trim(); // Get only the first quota to avoid UI breakage
                     }
-                    if (parsedUsage && parsedUsage.length > 25) {
-                        parsedUsage = parsedUsage.substring(0, 25) + '...';
+                    if (parsedUsage && parsedUsage.length > 60) {
+                        parsedUsage = parsedUsage.substring(0, 60) + '...';
                     }
 
                     const mergedState = {
