@@ -2,14 +2,39 @@ export async function getAppState(cdpList) {
     const EXP = `(() => {
         const state = { mode: 'Unknown', model: 'Unknown', usage: '' };
         const statusItems = Array.from(document.querySelectorAll('.statusbar-item'));
+        
+        // 1. 優先從狀態列抓取
         for (const item of statusItems) {
             const t = (item.innerText || "").trim();
             const aria = (item.getAttribute('aria-label') || "").trim().toLowerCase();
+            
             if (t === 'Fast' || t === 'Planning') state.mode = t;
-            if (aria.includes('gemini')) state.model = 'Gemini 3 Flash';
-            else if (aria.includes('claude')) state.model = 'Claude 3.5 Sonnet';
-            if (aria.includes('%')) state.usage = t || aria;
+            
+            // 模型識別改良：優先從文本
+            if (t.includes('Gemini') || aria.includes('gemini')) state.model = t.includes('Gemini') ? t : 'Gemini 3 Flash';
+            else if (t.includes('Claude') || aria.includes('claude')) state.model = t.includes('Claude') ? t : 'Claude 3.5 Sonnet';
+            
+            if (aria.includes('%') || t.includes('%')) state.usage = t || aria;
         }
+
+        // 2. 如果沒抓到模式，進行全域掃描 (處理新版 UI 可能將模式移出狀態列的情況)
+        if (state.mode === 'Unknown') {
+            const modeEl = Array.from(document.querySelectorAll('button span, div span, button')).find(el => {
+                const text = el.innerText.trim();
+                return (text === 'Fast' || text === 'Planning') && el.offsetWidth > 0;
+            });
+            if (modeEl) state.mode = modeEl.innerText.trim();
+        }
+
+        // 3. 模型再次確認 (如果 model 還是 Unknown)
+        if (state.model === 'Unknown') {
+            const modelEl = Array.from(document.querySelectorAll('button')).find(el => {
+                const t = el.innerText;
+                return (t.includes('Gemini') || t.includes('Claude') || t.includes('GPT')) && el.offsetWidth > 0;
+            });
+            if (modelEl) state.model = modelEl.innerText.trim();
+        }
+
         return state;
     })()`;
     const target = cdpList.find(c => c.title.includes('WSL')) || cdpList[0];
@@ -22,11 +47,11 @@ export async function getAppState(cdpList) {
 
 export async function setMode(cdpList, mode) {
     const EXP = `(async () => {
-        const btn = Array.from(document.querySelectorAll('button')).find(b => b.innerText.trim() === 'Fast' || b.innerText.trim() === 'Planning');
+        const btn = Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('Fast') || b.innerText.includes('Planning'));
         if (btn) {
             if (btn.innerText.includes('${mode}')) return { success: true };
             btn.click(); await new Promise(r=>setTimeout(r,500));
-            const opt = Array.from(document.querySelectorAll('div, button')).find(el => el.innerText.trim() === '${mode}');
+            const opt = Array.from(document.querySelectorAll('div, button, span')).find(el => el.innerText.trim() === '${mode}');
             if (opt) { opt.click(); return { success: true }; }
         }
         return { ok: false };
