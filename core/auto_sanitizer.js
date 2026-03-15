@@ -1,0 +1,86 @@
+/**
+ * Antigravity UI Sanitizer
+ * 專門處理 VS Code 內部協議與路徑過濾，確保手機端主控台潔淨且資源正確映射。
+ */
+
+export const BAD_SCHEMES = [
+    'vscode-file://', 
+    'file://', 
+    'app://', 
+    'devtools://', 
+    'vscode-webview-resource://'
+];
+
+export const BLANK_GIF = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
+/**
+ * 清理文本內的敏感路徑與無效協議
+ */
+export function cleanContent(text) {
+    if (!text || typeof text !== 'string') return text;
+    let out = text;
+
+    // 1. 隱私路徑中和 (Antigravity Brain)
+    const brainRegex = /[a-z]:[^"'> ]+?\\.gemini[\\\\\\/]+antigravity[\\\\\\/]+brain[\\\\\\/]+/gi;
+    out = out.replace(brainRegex, '/brain/');
+
+    // 2. VS Code 資源映射
+    const resourceRegex = /(?:[a-zA-Z0-9+.-]+:\\/\\/[^"'>\\s]*?(?=[a-zA-Z](:|%3A)))?(?:\\/+)?([a-zA-Z](:|%3A)(?:[\\\\\\/]|%2F|%5C|%20|\\s)+Program(?:[\\\\\\/]|%2F|%5C|%20|\\s)+Files)/gi;
+    out = out.replace(resourceRegex, '/vscode-resources');
+    out = out.replace(/\\/\\/vscode-resources/gi, '/vscode-resources');
+
+    // 3. 處理 CSS url() 內的無效協議
+    if (out.includes('url(')) {
+        out = out.split('url(').map((part, i) => {
+            if (i === 0) return part;
+            const endIdx = part.indexOf(')');
+            if (endIdx === -1) return part;
+            const urlContent = part.substring(0, endIdx);
+            if (BAD_SCHEMES.some(s => urlContent.includes(s))) {
+                return '"' + BLANK_GIF + '"' + part.substring(endIdx);
+            }
+            return part;
+        }).join('url(');
+    }
+
+    // 4. 強力中和其餘協議
+    BAD_SCHEMES.forEach(s => {
+        out = out.split(s).join('#');
+    });
+
+    return out;
+}
+
+/**
+ * 針對 DOM 節點屬性的特定清理邏輯 (用於快照腳本內部)
+ */
+export const SANITIZE_ATTR_SCRIPT = `
+    const badSchemes = ${JSON.stringify(BAD_SCHEMES)};
+    const blankGif = "${BLANK_GIF}";
+    
+    const cleanAttr = (val) => {
+        if (!val) return val;
+        let out = val;
+        if (badSchemes.some(s => out.includes(s)) || out.includes('antigravity') || out.includes('Program Files')) {
+            // 簡易版正則，因為 Webview 環境限制
+            out = out.replace(/[a-z]:[^"'> ]+?\\.gemini[\\\\\\/]+antigravity[\\\\\\/]+brain[\\\\\\/]+/gi, '/brain/');
+            badSchemes.forEach(s => out = out.split(s).join('#'));
+        }
+        return out;
+    };
+
+    clone.querySelectorAll('*').forEach(el => {
+        for (let i = 0; i < el.attributes.length; i++) {
+            const attr = el.attributes[i];
+            const val = attr.value;
+            if (badSchemes.some(s => val.includes(s))) {
+                let cleaned = cleanAttr(val);
+                if (el.tagName === 'IMG' && attr.name === 'src' && cleaned.includes('#')) {
+                    cleaned = blankGif;
+                }
+                el.setAttribute(attr.name, cleaned);
+            }
+        }
+        if (el.tagName === 'STYLE') el.textContent = cleanAttr(el.textContent);
+    });
+`;
