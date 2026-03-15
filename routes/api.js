@@ -100,8 +100,9 @@ router.get('/available-models', async (req, res) => {
 router.get('/usage-details', async (req, res) => {
     try {
         console.log(`[API] /usage-details called by: ${req.headers['user-agent']} at ${new Date().toISOString()}`);
-        const conn = await getOrConnectParams(parseInt(req.query.port) || 9000);
-        const result = await getDetailedUsage(conn);
+        const port = parseInt(req.query.port) || 9000;
+        const conn = await getOrConnectParams(port);
+        const result = await getDetailedUsage(conn, port);
         console.log(`[API] /usage-details result:`, result);
         res.json(result);
     } catch (e) {
