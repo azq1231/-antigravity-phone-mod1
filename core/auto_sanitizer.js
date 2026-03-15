@@ -21,13 +21,15 @@ export function cleanContent(text) {
     let out = text;
 
     // 1. 隱私路徑中和 (Antigravity Brain)
-    const brainRegex = /[a-z]:[^"'> ]+?\\.gemini[\\\\\\/]+antigravity[\\\\\\/]+brain[\\\\\\/]+/gi;
-    out = out.replace(brainRegex, '/brain/');
+    // 使用字串替換避開複雜正則
+    if (out.includes('.gemini')) {
+        out = out.replace(/[a-zA-Z]:[^"'> ]+?[\/\\]\.gemini[\/\\]antigravity[\/\\]brain[\/\\]/gi, '/brain/');
+    }
 
-    // 2. VS Code 資源映射
-    const resourceRegex = /(?:[a-zA-Z0-9+.-]+:\\/\\/[^"'>\\s]*?(?=[a-zA-Z](:|%3A)))?(?:\\/+)?([a-zA-Z](:|%3A)(?:[\\\\\\/]|%2F|%5C|%20|\\s)+Program(?:[\\\\\\/]|%2F|%5C|%20|\\s)+Files)/gi;
-    out = out.replace(resourceRegex, '/vscode-resources');
-    out = out.replace(/\\/\\/vscode-resources/gi, '/vscode-resources');
+    // 2. VS Code 資源映射 (中和 Program Files 路徑)
+    if (out.includes('Program Files')) {
+        out = out.replace(/[a-zA-Z]:[\/\\]Program Files/gi, '/vscode-resources');
+    }
 
     // 3. 處理 CSS url() 內的無效協議
     if (out.includes('url(')) {
@@ -45,7 +47,7 @@ export function cleanContent(text) {
 
     // 4. 強力中和其餘協議
     BAD_SCHEMES.forEach(s => {
-        out = out.split(s).join('#');
+        if (out.includes(s)) out = out.split(s).join('#');
     });
 
     return out;
@@ -61,11 +63,18 @@ export const SANITIZE_ATTR_SCRIPT = `
     const cleanAttr = (val) => {
         if (!val) return val;
         let out = val;
-        if (badSchemes.some(s => out.includes(s)) || out.includes('antigravity') || out.includes('Program Files')) {
-            // 簡易版正則，因為 Webview 環境限制
-            out = out.replace(/[a-z]:[^"'> ]+?\\.gemini[\\\\\\/]+antigravity[\\\\\\/]+brain[\\\\\\/]+/gi, '/brain/');
-            badSchemes.forEach(s => out = out.split(s).join('#'));
+        
+        // 簡易路徑匹配
+        if (out.includes('antigravity') || out.includes('.gemini')) {
+            out = out.replace(/[a-zA-Z]:[^"'> ]+?[\\/]\.gemini[\\/]antigravity[\\/]brain[\\/]/gi, '/brain/');
         }
+        if (out.includes('Program Files')) {
+            out = out.replace(/[a-zA-Z]:[\\/]Program Files/gi, '/vscode-resources');
+        }
+
+        badSchemes.forEach(s => {
+            if (out.includes(s)) out = out.split(s).join('#');
+        });
         return out;
     };
 
@@ -73,7 +82,7 @@ export const SANITIZE_ATTR_SCRIPT = `
         for (let i = 0; i < el.attributes.length; i++) {
             const attr = el.attributes[i];
             const val = attr.value;
-            if (badSchemes.some(s => val.includes(s))) {
+            if (badSchemes.some(s => val.includes(s)) || val.includes('Program Files') || val.includes('antigravity')) {
                 let cleaned = cleanAttr(val);
                 if (el.tagName === 'IMG' && attr.name === 'src' && cleaned.includes('#')) {
                     cleaned = blankGif;
