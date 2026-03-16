@@ -321,8 +321,9 @@ export async function discoverModels(cdpList) {
 export async function startNewChat(cdpList) {
     const EXP = `(async () => {
     try {
-        const btn = document.querySelector('[data-tooltip-id="new-conversation-tooltip"]') || 
-                   Array.from(document.querySelectorAll('button')).find(b => b.querySelector('svg.lucide-plus') || b.innerText.includes('New Chat'));
+        const isVisible = (el) => el && el.offsetHeight > 0;
+        const btn = Array.from(document.querySelectorAll('[data-tooltip-id="new-conversation-tooltip"]')).find(isVisible) || 
+                   Array.from(document.querySelectorAll('button')).find(b => isVisible(b) && (b.querySelector('svg.lucide-plus') || b.innerText.includes('New Chat')));
         if (btn) { btn.click(); return { success: true }; }
         return { error: 'Not found' };
     } catch (err) { return { error: err.toString() }; }

@@ -8,12 +8,23 @@ export async function captureSnapshot(cdpList) {
             const body = document.body;
             if (!body) return { error: 'No body' };
             
-            // 1. 分層匹配
-            const exactTarget = document.querySelector('#conversation') || 
-                         document.querySelector('#chat') || 
-                         document.querySelector('#cascade');
-            const looseTarget = document.querySelector('main') ||
-                         document.querySelector('[role="main"]');
+            const isChatContainer = (el) => el && (el.id === 'conversation' || el.id === 'chat' || el.id === 'cascade');
+            const exactTarget = [
+                document.querySelector('#conversation'),
+                document.querySelector('#chat'),
+                document.querySelector('#cascade')
+            ].find(el => el && (el.offsetHeight > 0 || isChatContainer(el)));
+
+            const isVisible = (el) => {
+                if (!el) return false;
+                const style = window.getComputedStyle(el);
+                return style.display !== 'none' && style.visibility !== 'hidden' && el.offsetHeight > 0;
+            };
+
+            const looseTarget = [
+                document.querySelector('main'),
+                document.querySelector('[role="main"]')
+            ].find(isVisible);
             
             const target = exactTarget || looseTarget;
             const matchQuality = exactTarget ? 'exact' : (looseTarget ? 'loose' : 'fallback');
@@ -91,7 +102,9 @@ export async function captureSnapshot(cdpList) {
                 matchQuality: matchQuality,
                 duration: Date.now() - startTime,
                 title: document.title,
-                url: window.location.href
+                url: window.location.href,
+                hasFocus: document.hasFocus(),
+                visibility: document.visibilityState
             };
         } catch (e) { return { error: e.toString() }; }
     }) ()`;
@@ -105,30 +118,58 @@ export async function captureSnapshot(cdpList) {
                 if (ctx.id !== undefined) params.contextId = ctx.id;
 
                 const res = await cdp.call("Runtime.evaluate", params);
-                if (res.result?.value && !res.result.value.error) {
+                if (res.result?.value) {
                     const val = res.result.value;
-                    // 在實體環境清洗數據，避免在 Webview 內跑複雜正則
-                    val.html = cleanContent(val.html);
-                    val.css = cleanContent(val.css);
+                    if (val.error) {
+                        console.log(`[V4-SNAP] Context ${ctx.id} reported error: ${val.error}`);
+                        continue;
+                    }
+                    if (!val.html) {
+                        console.log(`[V4-SNAP] Context ${ctx.id} returned empty HTML`);
+                        continue;
+                    }
+
+                    val.html = cleanContent(val.html || '');
+                    val.css = cleanContent(val.css || '');
 
                     candidates.push({
                         ...val,
                         hash: simpleHash(val.html),
                         targetTitle: cdp.title
                     });
+                } else {
+                    // console.log(`[V4-SNAP] Context ${ctx.id} evaluation failed or returned null`);
                 }
-            } catch (e) { }
+            } catch (e) { 
+                console.error(`[V4-SNAP] Exception processing context ${ctx.id}:`, e.message);
+            }
         }
     }
 
     if (candidates.length === 0) return { error: 'no snapshot found' };
 
-    const qualityScore = { exact: 3, loose: 1, fallback: 0 };
+    const qualityScore = { exact: 1000000, loose: 1000, fallback: 0 };
     candidates.sort((a, b) => {
-        const qa = qualityScore[a.matchQuality] || 0;
-        const qb = qualityScore[b.matchQuality] || 0;
+        // 1. 優先比對品質 (exact > loose > fallback)
+        const qa = (qualityScore[a.matchQuality] || 0) + (a.matchQuality === 'exact' ? 500000 : 0);
+        const qb = (qualityScore[b.matchQuality] || 0) + (b.matchQuality === 'exact' ? 500000 : 0);
         if (qa !== qb) return qb - qa;
-        return b.html.length - a.html.length;
+        
+        // 2. 只有品質相同時，比對可見性 (visible 絕對優先)
+        if (a.visibility !== b.visibility) return a.visibility === 'visible' ? -1 : 1;
+
+        // 3. 比對焦點
+        if (a.hasFocus !== b.hasFocus) return a.hasFocus ? -1 : 1;
+        
+        // 4. 特殊處理：如果是新開的對話（長度很短但包含聊天容器），賦予一個虛擬長度加成
+        // 避免被 100KB+ 的舊對話「長度壓制」
+        const getEffectiveLength = (c) => {
+            let len = c.html.length;
+            if (c.matchQuality === 'exact' && len < 10000) len += 200000; // 賦予新對話巨大的競爭力
+            return len;
+        };
+
+        return getEffectiveLength(b) - getEffectiveLength(a);
     });
 
     return candidates[0];
