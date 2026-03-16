@@ -6,10 +6,10 @@ export async function getDetailedUsage(cdpList, port = 9001) {
         if (!countdown || countdown === 'N/A') return 'N/A';
         try {
             let totalMs = 0;
-            const d = countdown.match(/(\d+)d/i);
-            const h = countdown.match(/(\d+)h/i);
-            const m = countdown.match(/(\d+)m/i);
-            const s = countdown.match(/(\d+)s/i);
+            const d = countdown.match(/(\d+)\s*(?:d|天)/i);
+            const h = countdown.match(/(\d+)\s*(?:h|時)/i);
+            const m = countdown.match(/(\d+)\s*(?:m|分)/i);
+            const s = countdown.match(/(\d+)\s*(?:s|秒)/i);
 
             if (d) totalMs += parseInt(d[1]) * 24 * 60 * 60 * 1000;
             if (h) totalMs += parseInt(h[1]) * 60 * 60 * 1000;
@@ -45,6 +45,7 @@ export async function getDetailedUsage(cdpList, port = 9001) {
                 return null;
             };
 
+            const basicResults = {};
             // 1. 先抓狀態列作為基礎百分比
             try {
                 document.querySelectorAll('.statusbar-item').forEach(el => {
@@ -54,70 +55,109 @@ export async function getDetailedUsage(cdpList, port = 9001) {
                     while ((m = regex.exec(text)) !== null) {
                         const key = getGroupKey(m[1]);
                         if (key) {
-                            if (!rawResults[key]) rawResults[key] = { percent: "N/A", countdown: "N/A", eta: "N/A" };
-                            if (m[2]) rawResults[key].percent = m[2] + "%";
+                            if (m[2]) basicResults[key] = m[2] + "%";
                         }
                     }
                 });
             } catch(e) {}
 
-            // 2. 深度解析：尋找所有包含模型資訊的容器
-            const allElements = Array.from(document.querySelectorAll('div, section, [role="dialog"] div, .monaco-list-row'));
-            allElements.forEach(container => {
-                const isNoise = container.closest('.monaco-editor, .view-lines, .terminal-container, .interactive-session, .chat-panel, .message-list-item, .suggest-widget');
-                if (isNoise) return;
+            // 2. 深度解析：遞迴尋找所有包含模型資訊的容器
+            const scan = (doc, prefix = "") => {
+                const containers = Array.from(doc.querySelectorAll('div, section, [role="dialog"] div, .monaco-list-row, .card, .quota-compact-item'));
+                containers.forEach(container => {
+                    const isNoise = container.closest('.monaco-editor, .view-lines, .terminal-container, .interactive-session, .chat-panel, .message-list-item, .suggest-widget');
+                    if (isNoise) return;
 
-                const cText = (container.innerText || "").trim();
-                if (cText.length > 500 || cText.length < 5) return;
+                    const cText = (container.innerText || "").trim();
+                    if (cText.length > 20000 || cText.length < 2) return;
 
-                // 在同一個容器內搜尋多個模型匹配
-                const modelRegex = /(Flash|Pro|Claude|GPT-4o)/gi;
-                let match;
-                while ((match = modelRegex.exec(cText)) !== null) {
-                    const modelName = match[1];
-                    const key = getGroupKey(modelName);
-                    if (!key) continue;
+                    const modelRegex = /(Flash|Pro|Claude|GPT-4o)/gi;
+                    let match;
+                    while ((match = modelRegex.exec(cText)) !== null) {
+                        const modelName = match[1];
+                        const key = getGroupKey(modelName);
+                        if (!key) continue;
 
-                    // 僅限在模型名稱之後的 100 字元內尋找數據，避免跨模型誤抓
-                    const subText = cText.substring(match.index, match.index + 100);
-                    
-                    if (!rawResults[key]) rawResults[key] = { percent: "N/A", countdown: "N/A", eta: "N/A" };
+                        const subText = cText.substring(match.index, match.index + 1000);
+                        if (!rawResults[key]) rawResults[key] = { percent: "N/A", countdown: "N/A", eta: "N/A", priority: -1 };
 
-                    // 1. 提取百分比
-                    const pm = subText.match(/([0-9.]+)\s*%/);
-                    if (pm && rawResults[key].percent === 'N/A') {
-                        rawResults[key].percent = pm[1] + "%";
-                    }
-                    
-                    // 2. 提取倒計時 (採用 trace_hits.js 驗證成功的樣式，但加強邊界防止抓到下一個模型)
-                    const cdMatch = subText.match(/重置倒計時:?\\s*([^\\n%]{2,15})/i) || 
-                                   subText.match(/%\\s*([^\\n%]{2,15})/i);
-                    
-                    if (cdMatch && rawResults[key].countdown === 'N/A') {
-                        const val = cdMatch[1].trim();
-                        // 驗證是否含有數字且符合時間格式 (d/h/m)
-                        if (/\\d/.test(val) && /[dhm]/i.test(val) && val.length < 15) {
-                            rawResults[key].countdown = val;
+                        const isDialog = container.closest('.monaco-dialog-box, .monaco-dialog-container, .quick-input-widget, [role="dialog"], .modal-card, .antigravity-usage-popup');
+                        const hasPopupMarker = cText.includes('🚀') || cText.includes('點擊打開') || cText.includes('打開配額監控');
+                        const isMonitorTab = cText.includes('帳號總覽') || cText.includes('配額歷史') || cText.includes('管理模型');
+                        
+                        let currentPriority = 0;
+                        if (hasPopupMarker && !isMonitorTab) currentPriority = 3;
+                        else if (isDialog) currentPriority = 2;
+                        else if (isMonitorTab) currentPriority = 1;
+
+                        if (currentPriority < rawResults[key].priority) continue;
+                        rawResults[key].priority = currentPriority;
+
+                        const cleanSub = subText.replace(/\\s+/g, ' ');
+
+                        // 1. 提取百分比
+                        const pm = cleanSub.match(/([0-9.]+)\\s*%/);
+                        if (pm && (rawResults[key].percent === 'N/A' || currentPriority >= 2)) {
+                            rawResults[key].percent = pm[1].includes('.') ? pm[1] + "%" : parseInt(pm[1]) + "%";
                         }
+                        
+                        // 2. 提取倒計時
+                        const timeStrPattern = "((?:\\\\d+\\\\s*(?:[dhms](?![a-z])|[時分秒天])\\\\s*){1,4})";
+                        const cdMatch = cleanSub.match(new RegExp("(?:重置倒計時|->|%|\\\\s)" + timeStrPattern, "i")) ||
+                                       cleanSub.match(new RegExp(timeStrPattern, "i"));
+                        
+                        if (cdMatch) {
+                            let val = cdMatch[1].trim();
+                            const isNoiseStr = /Claude|Flash|Pro|GPT-4o|\\\\||分鐘前|分前|秒前|statusBar|settings/i.test(val);
+                            if (!isNoiseStr && /\\\\d/.test(val) && val.length > 1 && val.length < 35) {
+                                if (rawResults[key].countdown === 'N/A' || currentPriority >= 2) {
+                                    rawResults[key].countdown = val;
+                                }
+                            }
+                        }
+
+                        // 3. 提取 ETA
+                        const etaStrPattern = "(\\\\d{4}[/-]\\\\d{1,2}[/-]\\\\d{1,2}\\\\s*[\\\\d:]+|\\\\d{1,2}:\\\\d{2})";
+                        const etaMatch = cleanSub.match(new RegExp("(?:重置時間|\\\\(|\\\\s)" + etaStrPattern, "i")) ||
+                                         cleanSub.match(new RegExp(etaStrPattern, "i"));
+                        
+                        if (etaMatch && (rawResults[key].eta === 'N/A' || currentPriority >= 2)) {
+                            let etaVal = etaMatch[1].trim();
+                            let valid = true;
+                            if (etaVal.length <= 5 && etaVal.includes(':')) {
+                                const h = parseInt(etaVal.split(':')[0]);
+                                if (isNaN(h) || h >= 24) valid = false;
+                                else {
+                                    const now = new Date();
+                                    const pad = (n) => n.toString().padStart(2, '0');
+                                    etaVal = now.getFullYear() + "/" + pad(now.getMonth() + 1) + "/" + pad(now.getDate()) + " " + etaVal;
+                                }
+                            }
+                            if (valid) rawResults[key].eta = etaVal;
+                        }
+
+                        if (currentPriority >= 2) isDialogMode = true;
                     }
+                });
 
-                    // 3. 提取 ETA
-                    const etaMatch = subText.match(/重置時間:?\\s*(\\d{4}[/-]\\d{1,2}[/-]\\d{1,2}\\s*[\\d:]+)/);
-                    if (etaMatch && rawResults[key].eta === 'N/A') {
-                        rawResults[key].eta = etaMatch[1].trim();
-                    }
+                doc.querySelectorAll('iframe').forEach(iframe => {
+                    try {
+                        if (iframe.contentDocument) scan(iframe.contentDocument, prefix + "if > ");
+                    } catch(e) {}
+                });
+            };
 
-                    // 標記是否為對話框
-                    const isDialog = container.closest('.monaco-dialog-box, .monaco-dialog-container, .quick-input-widget');
-                    if (isDialog) isDialogMode = true;
-                }
-            });
+            scan(document);
 
-            // 補完模型項目
             ['Gemini 3 Flash', 'Gemini 3 Pro (H/L)', 'Claude / GPT-4o'].forEach(model => {
-                finalData[model] = rawResults[model] || { percent: "N/A", countdown: "N/A", eta: "N/A" };
+                const res = rawResults[model] || { percent: "N/A", countdown: "N/A", eta: "N/A" };
+                // 如果詳細數據沒抓到百分比，拿狀態列的補
+                if (res.percent === 'N/A' && basicResults[model]) {
+                    res.percent = basicResults[model];
+                }
+                finalData[model] = res;
             });
-            return { success: true, data: finalData, isDialogMode };
+            return { success: true, data: finalData, isDialogMode, debug: { raw: rawResults, basic: basicResults } };
         } catch (e) { return { success: false, error: e.toString() }; }
     })()`;
 
@@ -131,13 +171,13 @@ export async function getDetailedUsage(cdpList, port = 9001) {
                     const val = res.result.value;
                     const data = val.data;
                     
+                    if (val.isDialogMode) console.log(`[DetailedUsage] Found Dialog Mode on Port ${port}`);
+
                     // 檢查數據完整性
-                    const hasPercent = Object.values(data).some(d => d.percent !== 'N/A');
                     const hasCountdown = Object.values(data).some(d => d.countdown !== 'N/A');
+                    const hasPercent = Object.values(data).some(d => d.percent !== 'N/A');
                     
-                    // 如果有倒計時，這是最理想的結果，直接返回
                     if (hasCountdown) {
-                        // 自動補完 ETA (如果顯示 N/A)
                         Object.keys(data).forEach(k => {
                             if (data[k].eta === 'N/A' && data[k].countdown !== 'N/A') {
                                 data[k].eta = calculateETA(data[k].countdown);
@@ -145,22 +185,11 @@ export async function getDetailedUsage(cdpList, port = 9001) {
                         });
                         return val;
                     }
-                    
-                    // 如果只有百分比，先存起來作為備案
                     if (hasPercent && !bestResult) bestResult = val;
                     if (hasPercent && !global.tempBasicData) global.tempBasicData = val;
                 }
             }
         } catch(e) {}
-        
-        // 對備案結果也進行 ETA 補全
-        if (bestResult?.data) {
-            Object.keys(bestResult.data).forEach(k => {
-                if (bestResult.data[k].eta === 'N/A' && bestResult.data[k].countdown !== 'N/A') {
-                    bestResult.data[k].eta = calculateETA(bestResult.data[k].countdown);
-                }
-            });
-        }
         return bestResult;
     };
 
@@ -170,12 +199,15 @@ export async function getDetailedUsage(cdpList, port = 9001) {
                 const isNoise = el.closest('.monaco-editor, .view-lines');
                 if (isNoise) return false;
                 const t = ((el.getAttribute('aria-label')||"") + " " + (el.innerText || "")).toLowerCase();
+                const isSettings = t.includes("settings");
+                if (isSettings) return false;
                 return t.includes("${query}".toLowerCase()) && el.offsetParent && el.getBoundingClientRect().width > 0;
             });
             const target = els.sort((a,b) => {
                 const aIsStatus = a.classList.contains('statusbar-item') ? 0 : 1;
                 const bIsStatus = b.classList.contains('statusbar-item') ? 0 : 1;
                 if (aIsStatus !== bIsStatus) return aIsStatus - bIsStatus;
+                // Prefer shorter text (more likely to be the % bubble)
                 return a.innerText.length - b.innerText.length;
             })[0];
             if (target) {
@@ -199,14 +231,27 @@ export async function getDetailedUsage(cdpList, port = 9001) {
     // Phase 1: 靜態掃描
     for (const c of cdpList) {
         const res = await evalWithFallback(c, EXTRACT_SCRIPT);
-        if (res) return res;
+        // 如果有倒計時則直接返回，否則繼續 Phase 2 去點擊
+        if (res && res.data && Object.values(res.data).some(d => d.countdown !== 'N/A')) {
+            return res;
+        }
     }
 
-    // Phase 2: 觸發詳細資訊
+    // Phase 2: 觸發並優先抓取小視窗 (Popup)
     const wb = cdpList.find(c => c.title.includes('Antigravity') || c.title.includes('WSL')) || cdpList[0];
     if (wb) {
-        if (await doPhysicalClick(wb, "Antigravity") || await doPhysicalClick(wb, "%")) {
-            await sleep(2500);
+        // 1. 嘗試點擊狀態列的 % 打開「小視窗」 (避開 Settings)
+        if (await doPhysicalClick(wb, "%") || await doPhysicalClick(wb, "Pro:") || await doPhysicalClick(wb, "Flash:")) {
+            await sleep(2000); // 等待小視窗彈出
+            
+            const postClickWindows = await getOrConnectParams(port, true);
+            for (const win of postClickWindows) {
+                const res = await evalWithFallback(win, EXTRACT_SCRIPT);
+                // 如果已經抓到了 Popup 小視窗 (Dialog)，就不應該再執行後續的盲目點擊 fallback
+                if (res?.isDialogMode) return res;
+            }
+
+            // 2. 如果小視窗沒抓到完整數據，再嘗試點進「詳細/監控分頁」 (作為備案)
             await doPhysicalClick(wb, "Advanced");
             await sleep(1500);
             
@@ -221,7 +266,7 @@ export async function getDetailedUsage(cdpList, port = 9001) {
             const finalSweep = await getOrConnectParams(port, true);
             for (const f of finalSweep) {
                 const res = await evalWithFallback(f, EXTRACT_SCRIPT);
-                if (res) return res;
+                if (res?.data && Object.values(res.data).some(d => d.countdown !== 'N/A')) return res;
             }
         }
     }

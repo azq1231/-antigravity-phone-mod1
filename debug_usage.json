@@ -1,0 +1,51 @@
+{
+  "success": true,
+  "data": {
+    "Gemini 3 Flash": {
+      "percent": "20%",
+      "countdown": "N/A",
+      "eta": "2026/03/16 0:21",
+      "priority": 2
+    },
+    "Gemini 3 Pro (H/L)": {
+      "percent": "20%",
+      "countdown": "N/A",
+      "eta": "2026/03/16 30:21",
+      "priority": 2
+    },
+    "Claude / GPT-4o": {
+      "percent": "0%",
+      "countdown": "N/A",
+      "eta": "N/A",
+      "priority": 2
+    }
+  },
+  "isDialogMode": true,
+  "debug": {
+    "raw": {
+      "Gemini 3 Pro (H/L)": {
+        "percent": "20%",
+        "countdown": "N/A",
+        "eta": "2026/03/16 30:21",
+        "priority": 2
+      },
+      "Gemini 3 Flash": {
+        "percent": "20%",
+        "countdown": "N/A",
+        "eta": "2026/03/16 0:21",
+        "priority": 2
+      },
+      "Claude / GPT-4o": {
+        "percent": "0%",
+        "countdown": "N/A",
+        "eta": "N/A",
+        "priority": 2
+      }
+    },
+    "basic": {
+      "Gemini 3 Pro (H/L)": "20%",
+      "Gemini 3 Flash": "20%",
+      "Claude / GPT-4o": "0%"
+    }
+  }
+}
