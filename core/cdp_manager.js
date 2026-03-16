@@ -104,6 +104,22 @@ export async function connectCDP(url) {
     // Enable Runtime immediately to start receiving context events
     await call("Runtime.enable");
 
+    // [SECURITY] 環境大掃除：終止目標視窗內可能殘留的殭屍計時器
+    const CLEANUP_SCRIPT = `(() => {
+        try {
+            let highestId = setTimeout(() => {}, 0);
+            for (let i = 0; i <= highestId; i++) {
+                clearTimeout(i);
+                clearInterval(i);
+            }
+            if (window.__ag_observers) {
+                window.__ag_observers.forEach(obs => obs.disconnect());
+                window.__ag_observers = [];
+            }
+        } catch (e) {}
+    })()`;
+    await call("Runtime.evaluate", { expression: CLEANUP_SCRIPT }).catch(() => {});
+
     // Give a short grace period for initial contexts to populate
     await new Promise(r => setTimeout(r, 200));
 
