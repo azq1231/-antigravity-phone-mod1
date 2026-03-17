@@ -36,10 +36,10 @@ export async function getAppState(cdpList) {
             }
 
             if (state.usage === '' && !combined.includes('rocket') && !combined.includes('gitlens')) {
-                if (aria.includes('%') && (aria.includes('|') || aria.includes(':'))) {
-                    state.usage = aria;
-                } else if (t.includes('%') && (t.includes('|') || t.includes(':'))) {
-                    state.usage = t;
+                const hasModel = combined.includes('gemini') || combined.includes('claude') || combined.includes('gpt') || combined.includes('sonnet') || combined.includes('pro') || combined.includes('flash');
+                const hasPercent = combined.includes('%');
+                if (hasPercent && (hasModel || combined.includes('|') || combined.includes(':'))) {
+                    state.usage = aria || t;
                 }
             }
         }

@@ -1,6 +1,7 @@
 export async function getDetailedUsage(cdpList, port = 9001) {
     const { getOrConnectParams } = await import('./cdp_manager.js');
     const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const LOG_PREFIX = `[Quota-V4-Port${port}]`;
 
     const calculateETA = (countdown) => {
         if (!countdown || countdown === 'N/A') return 'N/A';
@@ -41,7 +42,7 @@ export async function getDetailedUsage(cdpList, port = 9001) {
                 const n = name.trim().toLowerCase();
                 if (n.includes('flash')) return nameMap['Flash'];
                 if (n.includes('pro')) return nameMap['Pro'];
-                if (n.includes('gpt') || n.includes('claude') || n.includes('4o')) return nameMap['Claude'];
+                if (n.includes('gpt') || n.includes('claude') || n.includes('sonnet') || n.includes('4o')) return nameMap['Claude'];
                 return null;
             };
 
@@ -49,13 +50,18 @@ export async function getDetailedUsage(cdpList, port = 9001) {
             // 1. 先抓狀態列作為基礎百分比
             try {
                 document.querySelectorAll('.statusbar-item').forEach(el => {
-                    const text = (el.innerText || "") + (el.getAttribute('aria-label') || "");
-                    const regex = /(Pro|Flash|Claude):?\\s*([0-9.]+)?%?/gi;
+                    const text = (el.innerText || "") + " " + (el.getAttribute('aria-label') || "");
+                    // 修正：必須要有 % 符號才抓取，避免抓到 Sonnet 4.6 的 4.6
+                    const regex = /(Pro|Flash|Claude|Sonnet|GPT):?\\s*([0-9.]+)\\s*%/gi;
                     let m;
                     while ((m = regex.exec(text)) !== null) {
                         const key = getGroupKey(m[1]);
-                        if (key) {
-                            if (m[2]) basicResults[key] = m[2] + "%";
+                        if (key && m[2]) {
+                            const val = m[2];
+                            // 再次過濾常見版本號
+                            if (val !== "4.6" && val !== "3.1" && val !== "120") {
+                                basicResults[key] = val + "%";
+                            }
                         }
                     }
                 });
@@ -63,27 +69,34 @@ export async function getDetailedUsage(cdpList, port = 9001) {
 
             // 2. 深度解析：遞迴尋找所有包含模型資訊的容器
             const scan = (doc, prefix = "") => {
-                const containers = Array.from(doc.querySelectorAll('div, section, [role="dialog"] div, .monaco-list-row, .card, .quota-compact-item'));
-                containers.forEach(container => {
+                // 優先尋找「行」容器，這能有效防止模型數據交叉汙染
+                const rows = Array.from(doc.querySelectorAll('.monaco-list-row, .quota-compact-item, tr, .card, [role="row"]'));
+                
+                // 如果沒有行容器，才去找 div (但限制大小)
+                const fallbackContainers = rows.length > 0 ? [] : Array.from(doc.querySelectorAll('div, section')).filter(el => {
+                    const t = el.innerText || "";
+                    return t.length > 10 && t.length < 500;
+                });
+
+                [...rows, ...fallbackContainers].forEach(container => {
                     const isNoise = container.closest('.monaco-editor, .view-lines, .terminal-container, .interactive-session, .chat-panel, .message-list-item, .suggest-widget');
                     if (isNoise) return;
 
                     const cText = (container.innerText || "").trim();
-                    if (cText.length > 20000 || cText.length < 2) return;
+                    if (!cText || cText.length > 2000) return;
 
-                    const modelRegex = /(Flash|Pro|Claude|GPT-4o)/gi;
+                    const modelRegex = /(Flash|Pro|Claude|Sonnet|GPT-4o|Opus)/gi;
                     let match;
                     while ((match = modelRegex.exec(cText)) !== null) {
                         const modelName = match[1];
                         const key = getGroupKey(modelName);
                         if (!key) continue;
 
-                        const subText = cText.substring(match.index, match.index + 1000);
                         if (!rawResults[key]) rawResults[key] = { percent: "N/A", countdown: "N/A", eta: "N/A", priority: -1 };
 
                         const isDialog = container.closest('.monaco-dialog-box, .monaco-dialog-container, .quick-input-widget, [role="dialog"], .modal-card, .antigravity-usage-popup');
-                        const hasPopupMarker = cText.includes('🚀') || cText.includes('點擊打開') || cText.includes('打開配額監控');
-                        const isMonitorTab = cText.includes('帳號總覽') || cText.includes('配額歷史') || cText.includes('管理模型');
+                        const hasPopupMarker = cText.includes('🚀') || cText.includes('點擊打開') || cText.includes('打開配額監控') || doc.title.includes('配額');
+                        const isMonitorTab = cText.includes('帳號總覽') || cText.includes('配額歷史') || cText.includes('管理模型') || cText.includes('恢復時間');
                         
                         let currentPriority = 0;
                         if (hasPopupMarker && !isMonitorTab) currentPriority = 3;
@@ -93,47 +106,43 @@ export async function getDetailedUsage(cdpList, port = 9001) {
                         if (currentPriority < rawResults[key].priority) continue;
                         rawResults[key].priority = currentPriority;
 
-                        const cleanSub = subText.replace(/\\s+/g, ' ');
-
-                        // 1. 提取百分比
-                        const pm = cleanSub.match(/([0-9.]+)\\s*%/);
-                        if (pm && (rawResults[key].percent === 'N/A' || currentPriority >= 2)) {
-                            rawResults[key].percent = pm[1].includes('.') ? pm[1] + "%" : parseInt(pm[1]) + "%";
+                        // 在當前容器內尋找數據
+                        // 改進百分比匹配：確保不是型號名稱的一部分 (例如 4.6%)
+                        // 優先尋找 箭頭後面的百分比，或是獨立的數字百分比
+                        const pm = cText.match(/(?:->|→|重置)\\s*([0-9.]+)\\s*%/) || 
+                                   cText.match(/(?:^|\\s)([0-9.]+)\\s*%/);
+                        if (pm) {
+                            const val = pm[1];
+                            // 排除像 4.6 這種型號關鍵字
+                            if (val !== "4.6" && val !== "120" && val !== "4") {
+                                rawResults[key].percent = val.includes('.') ? val + "%" : parseInt(val) + "%";
+                            }
                         }
                         
-                        // 2. 提取倒計時
                         const timeStrPattern = "((?:\\\\d+\\\\s*(?:[dhms](?![a-z])|[時分秒天])\\\\s*){1,4})";
-                        const cdMatch = cleanSub.match(new RegExp("(?:重置倒計時|->|%|\\\\s)" + timeStrPattern, "i")) ||
-                                       cleanSub.match(new RegExp(timeStrPattern, "i"));
+                        const cdMatch = cText.match(new RegExp("(?:重置倒計時|->|%|\\\\s)" + timeStrPattern, "i")) ||
+                                       cText.match(new RegExp(timeStrPattern, "i"));
                         
                         if (cdMatch) {
                             let val = cdMatch[1].trim();
                             const isNoiseStr = /Claude|Flash|Pro|GPT-4o|\\\\||分鐘前|分前|秒前|statusBar|settings/i.test(val);
                             if (!isNoiseStr && /\\\\d/.test(val) && val.length > 1 && val.length < 35) {
-                                if (rawResults[key].countdown === 'N/A' || currentPriority >= 2) {
-                                    rawResults[key].countdown = val;
-                                }
+                                rawResults[key].countdown = val;
                             }
                         }
 
-                        // 3. 提取 ETA
                         const etaStrPattern = "(\\\\d{4}[/-]\\\\d{1,2}[/-]\\\\d{1,2}\\\\s*[\\\\d:]+|\\\\d{1,2}:\\\\d{2})";
-                        const etaMatch = cleanSub.match(new RegExp("(?:重置時間|\\\\(|\\\\s)" + etaStrPattern, "i")) ||
-                                         cleanSub.match(new RegExp(etaStrPattern, "i"));
+                        const etaMatch = cText.match(new RegExp("(?:重置時間|\\\\(|\\\\s)" + etaStrPattern, "i")) ||
+                                         cText.match(new RegExp(etaStrPattern, "i"));
                         
-                        if (etaMatch && (rawResults[key].eta === 'N/A' || currentPriority >= 2)) {
+                        if (etaMatch) {
                             let etaVal = etaMatch[1].trim();
-                            let valid = true;
                             if (etaVal.length <= 5 && etaVal.includes(':')) {
-                                const h = parseInt(etaVal.split(':')[0]);
-                                if (isNaN(h) || h >= 24) valid = false;
-                                else {
-                                    const now = new Date();
-                                    const pad = (n) => n.toString().padStart(2, '0');
-                                    etaVal = now.getFullYear() + "/" + pad(now.getMonth() + 1) + "/" + pad(now.getDate()) + " " + etaVal;
-                                }
+                                const now = new Date();
+                                const pad = (n) => n.toString().padStart(2, '0');
+                                etaVal = now.getFullYear() + "/" + pad(now.getMonth() + 1) + "/" + pad(now.getDate()) + " " + etaVal;
                             }
-                            if (valid) rawResults[key].eta = etaVal;
+                            rawResults[key].eta = etaVal;
                         }
 
                         if (currentPriority >= 2) isDialogMode = true;
@@ -228,49 +237,59 @@ export async function getDetailedUsage(cdpList, port = 9001) {
 
     global.tempBasicData = null;
 
-    // Phase 1: 靜態掃描
+    // Phase 1: 靜態掃描所有現有的視窗 (包含隱藏的 Monitor 頁面)
     for (const c of cdpList) {
         const res = await evalWithFallback(c, EXTRACT_SCRIPT);
-        // 如果有倒計時則直接返回，否則繼續 Phase 2 去點擊
+        // 如果已經有倒計時，說明抓到了彈窗或是監控頁面，直接回傳
         if (res && res.data && Object.values(res.data).some(d => d.countdown !== 'N/A')) {
+            console.log(`${LOG_PREFIX} Passive scan success on ${c.title}`);
             return res;
         }
     }
 
-    // Phase 2: 觸發並優先抓取小視窗 (Popup)
-    const wb = cdpList.find(c => c.title.includes('Antigravity') || c.title.includes('WSL')) || cdpList[0];
+    // Phase 2: 觸發掃描 (只有在 Phase 1 沒抓到倒計時的情況下才點擊)
+    const wb = cdpList.find(c => c.title.includes('Antigravity') || c.title.includes('WSL') || c.title.includes('Workbench')) || cdpList[0];
     if (wb) {
-        // 1. 嘗試點擊狀態列的 % 打開「小視窗」 (避開 Settings)
-        if (await doPhysicalClick(wb, "%") || await doPhysicalClick(wb, "Pro:") || await doPhysicalClick(wb, "Flash:")) {
-            await sleep(2000); // 等待小視窗彈出
+        console.log(`${LOG_PREFIX} Attempting trigger click on ${wb.title}...`);
+        // 1. 嘗試點擊狀態列。支援多種可能的文字模式
+        const clicked = await doPhysicalClick(wb, "%") || 
+                        await doPhysicalClick(wb, "Pro") || 
+                        await doPhysicalClick(wb, "Flash") || 
+                        await doPhysicalClick(wb, "Quota");
+
+        if (clicked) {
+            await sleep(1500); // 等待時間縮小到 1.5s，提高反應速度
             
-            const postClickWindows = await getOrConnectParams(port, true);
+            // 重新取得連線，但不強制斷開舊有的 (forceReconnect=false)，減少資源浪費
+            const postClickWindows = await getOrConnectParams(port, false); 
             for (const win of postClickWindows) {
                 const res = await evalWithFallback(win, EXTRACT_SCRIPT);
-                // 如果已經抓到了 Popup 小視窗 (Dialog)，就不應該再執行後續的盲目點擊 fallback
-                if (res?.isDialogMode) return res;
-            }
-
-            // 2. 如果小視窗沒抓到完整數據，再嘗試點進「詳細/監控分頁」 (作為備案)
-            await doPhysicalClick(wb, "Advanced");
-            await sleep(1500);
-            
-            const allWindows = await getOrConnectParams(port, true);
-            for (const win of allWindows) {
-                if (await doPhysicalClick(win, "Models") || await doPhysicalClick(win, "Quota")) {
-                    await sleep(3000);
-                    break;
+                if (res?.isDialogMode) {
+                    console.log(`${LOG_PREFIX} Active trigger success (Dialog)`);
+                    return res;
                 }
             }
 
-            const finalSweep = await getOrConnectParams(port, true);
-            for (const f of finalSweep) {
-                const res = await evalWithFallback(f, EXTRACT_SCRIPT);
-                if (res?.data && Object.values(res.data).some(d => d.countdown !== 'N/A')) return res;
+            // 備選方案：點擊 Advanced 進入監控頁面
+            await doPhysicalClick(wb, "Advanced");
+            await sleep(1000);
+            
+            const allWindows = await getOrConnectParams(port, false);
+            for (const win of allWindows) {
+                // 嘗試在監控頁面中切換分頁
+                if (await doPhysicalClick(win, "Models") || await doPhysicalClick(win, "Quota")) {
+                    await sleep(2000);
+                    const res = await evalWithFallback(win, EXTRACT_SCRIPT);
+                    if (res?.data && Object.values(res.data).some(d => d.countdown !== 'N/A')) {
+                        console.log(`${LOG_PREFIX} Detailed monitor scan success`);
+                        return res;
+                    }
+                }
             }
         }
     }
 
+    console.log(`${LOG_PREFIX} Returning basic data (Fallback)`);
     return global.tempBasicData || { success: false, error: 'Detailed data not found' };
 }
 
