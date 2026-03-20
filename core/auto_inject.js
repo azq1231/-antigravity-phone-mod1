@@ -89,20 +89,40 @@ export async function injectImage(cdpList, base64Data, text = null) {
             dt.items.add(file);
             target.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true }));
 
-            // 尋找發送按鈕坐標
+            // 尋找發送按鈕坐標 (精確過濾版)
             const findSendBtn = () => {
                 const candidates = Array.from(document.querySelectorAll('button')).filter(btn => {
                     const label = (btn.getAttribute('aria-label') || "").toLowerCase();
                     const tip = (btn.getAttribute('data-tooltip-id') || "").toLowerCase();
-                    return (label.includes('send') || tip.includes('send')) && btn.offsetHeight > 0;
+                    const text = btn.innerText.toLowerCase();
+                    
+                    // 基礎關鍵字匹配
+                    const isMatch = (label.includes('send') || tip.includes('send') || text.includes('發送')) && btn.offsetHeight > 0;
+                    
+                    // 排除清單：避免點到終端機發送或其他切換按鈕
+                    const isExcluded = label.includes('terminal') || label.includes('history') || label.includes('mode') || label.includes('plan');
+                    
+                    return isMatch && !isExcluded;
                 });
+
                 if (candidates.length === 0) return null;
-                const best = candidates.sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right)[0];
+
+                // 智慧排序：優先選擇最右下角的按鈕
+                const best = candidates.sort((a, b) => {
+                    const ra = a.getBoundingClientRect();
+                    const rb = b.getBoundingClientRect();
+                    // 分數計算：越靠右、越靠下分數越高
+                    const scoreA = ra.right + ra.bottom;
+                    const scoreB = rb.right + rb.bottom;
+                    return scoreB - scoreA;
+                })[0];
+
                 const r = best.getBoundingClientRect();
-                return { x: r.left + r.width/2, y: r.top + r.height/2 };
+                return { x: r.left + r.width/2, y: r.top + r.height/2, label: best.getAttribute('aria-label') };
             };
 
-            return { ok: true, rect: findSendBtn() };
+            const rect = findSendBtn();
+            return { ok: true, rect: rect, foundLabel: rect ? rect.label : null };
         } catch (e) { return { ok: false, error: e.toString() }; }
     })()`;
 
@@ -113,21 +133,29 @@ export async function injectImage(cdpList, base64Data, text = null) {
                 const res = await cdp.call("Runtime.evaluate", { expression: PREPARE_SCRIPT, returnByValue: true, awaitPromise: true, contextId: ctxId });
                 const val = res.result?.value;
                 if (val && val.ok) {
-                    if (text) await cdp.call('Input.insertText', { text: text + " " });
-                    await new Promise(r => setTimeout(r, 500));
+                    if (text) {
+                        await cdp.call('Input.insertText', { text: text + " " });
+                        await new Promise(r => setTimeout(r, 200));
+                    }
+                    
+                    // 關鍵等待：讓 Lexical 處理圖片數據
+                    await new Promise(r => setTimeout(r, 800));
 
                     if (val.rect) {
+                        console.log(`[AUTO-INJECT] Clicking send button: ${val.foundLabel} at (${Math.floor(val.rect.x)}, ${Math.floor(val.rect.y)})`);
                         const mouseBase = { x: Math.floor(val.rect.x), y: Math.floor(val.rect.y), button: 'left', clickCount: 1 };
                         await cdp.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...mouseBase });
-                        await new Promise(r => setTimeout(r, 30));
+                        await new Promise(r => setTimeout(r, 50));
                         await cdp.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...mouseBase });
-                    } else {
-                        // Fallback to Enter
-                        const kEnter = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 };
-                        await cdp.call('Input.dispatchKeyEvent', { type: 'keyDown', ...kEnter });
-                        await cdp.call('Input.dispatchKeyEvent', { type: 'keyUp', ...kEnter });
                     }
-                    return { ok: true };
+                    
+                    // 實體 Enter 補位 (Dual Trigger Strategy)
+                    const kEnter = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 };
+                    await cdp.call('Input.dispatchKeyEvent', { type: 'keyDown', ...kEnter });
+                    await new Promise(r => setTimeout(r, 20));
+                    await cdp.call('Input.dispatchKeyEvent', { type: 'keyUp', ...kEnter });
+                    
+                    return { ok: true, method: "optimized_snap_clear" };
                 }
             } catch (e) { }
         }

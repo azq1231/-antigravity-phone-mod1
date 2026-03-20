@@ -26,9 +26,16 @@ export function cleanContent(text) {
         out = out.replace(/[a-zA-Z]:[^"'> ]+?[\/\\]\.gemini[\/\\]antigravity[\/\\]brain[\/\\]/gi, '/brain/');
     }
 
-    // 2. VS Code 資源映射 (中和 Program Files 路徑)
+    // 2. VS Code 資源映射 (中和 Program Files 與 AppData 路徑)
     if (out.includes('Program Files')) {
+        out = out.replace(/[a-zA-Z]:[\/\\]Program Files[\\\/]Microsoft VS Code[\\\/]resources[\\\/]app/gi, '/vscode-resources');
         out = out.replace(/[a-zA-Z]:[\/\\]Program Files/gi, '/vscode-resources');
+    }
+    if (out.includes('AppData')) {
+        // 修正：支援中繼 Hash 資料夾 (如 61b3d0ab13)
+        out = out.replace(/[a-zA-Z]:[^"'> ]+?[\\/]AppData[\\/]Local[\\/]Programs[\\/]Microsoft VS Code[\\/]resources[\\/]app/gi, '/vscode-resources');
+        out = out.replace(/[a-zA-Z]:[^"'> ]+?[\\/]AppData[\\/]Local[\\/]Programs[\\/]Microsoft VS Code[^"'> ]*?[\\/]resources[\\/]app/gi, '/vscode-resources');
+        out = out.replace(/[a-zA-Z]:[^"'> ]+?[\\/]AppData[\\/]Local[\\/]Programs[\\/]Microsoft VS Code/gi, '/vscode-resources');
     }
 
     // 3. 處理 CSS url() 內的無效協議
@@ -69,7 +76,13 @@ export const SANITIZE_ATTR_SCRIPT = `
             out = out.replace(/[a-zA-Z]:[^"'> ]+?[\\/]\.gemini[\\/]antigravity[\\/]brain[\\/]/gi, '/brain/');
         }
         if (out.includes('Program Files')) {
+            out = out.replace(/[a-zA-Z]:[\\/]Program Files[\\/]Microsoft VS Code[\\/]resources[\\/]app/gi, '/vscode-resources');
             out = out.replace(/[a-zA-Z]:[\\/]Program Files/gi, '/vscode-resources');
+        }
+        if (out.includes('AppData')) {
+            out = out.replace(/[a-zA-Z]:[^"'> ]+?[\\/]AppData[\\/]Local[\\/]Programs[\\/]Microsoft VS Code[\\/]resources[\\/]app/gi, '/vscode-resources');
+            out = out.replace(/[a-zA-Z]:[^"'> ]+?[\\/]AppData[\\/]Local[\\/]Programs[\\/]Microsoft VS Code[^"'> ]*?[\\/]resources[\\/]app/gi, '/vscode-resources');
+            out = out.replace(/[a-zA-Z]:[^"'> ]+?[\\/]AppData[\\/]Local[\\/]Programs[\\/]Microsoft VS Code/gi, '/vscode-resources');
         }
 
         badSchemes.forEach(s => {

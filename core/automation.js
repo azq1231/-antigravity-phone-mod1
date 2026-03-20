@@ -16,6 +16,8 @@ import {
     selectChat, 
     getChatHistory 
 } from './auto_state.js';
+import { runAutoAccept } from './auto_accept.js';
+
 
 // 再次確認：修改 core/*.js 後必須重啟伺服器 (node scripts/reboot.js)
 
@@ -39,5 +41,9 @@ export {
     discoverModels,
     startNewChat,
     selectChat,
-    getChatHistory
+    getChatHistory,
+
+    // 自動按鈕點擊 (auto_accept.js)
+    runAutoAccept
 };
+

@@ -12,7 +12,7 @@ import WebSocket from 'ws';
 import net from 'net';
 
 import { activeConnections, getOrConnectParams } from './core/cdp_manager.js';
-import { captureSnapshot, injectScroll, getAppState } from './core/automation.js';
+import { captureSnapshot, injectScroll, getAppState, runAutoAccept } from './core/automation.js';
 import { findAllInstances } from './core/cdp_manager.js';
 
 import apiRoutes from './routes/api.js';
@@ -42,11 +42,7 @@ async function createServer() {
     });
 
     app.use((req, res, next) => {
-        // 忽略靜態資源的日誌，減少終端機噪音
-        const isStatic = /\.(svg|png|jpg|jpeg|gif|css|js|woff|ttf)$/.test(req.url);
-        if (!isStatic) {
-            console.log(`[HTTP] ${req.method} ${req.url} from ${req.ip}`);
-        }
+        console.log(`[HTTP] ${req.method} ${req.url} from ${req.ip}`);
         next();
     });
 
@@ -58,6 +54,33 @@ async function createServer() {
             next();
         }, express.static(brainPath));
         console.log(`[V4] Serving artifacts from: ${brainPath}`);
+    }
+
+    // Serve project assets (icons, images) - CRITICAL FOR PREVENTING BROKEN ICONS
+    const assetsPath = join(__dirname, 'assets');
+    if (fs.existsSync(assetsPath)) {
+        app.use('/assets', (req, res, next) => {
+            res.header('Access-Control-Allow-Origin', '*');
+            // 🚩 Ghost Icon Fallback: If an icon is missing, serve a generic placeholder
+            const cleanUrl = req.url.split('?')[0];
+            const target = join(assetsPath, cleanUrl);
+            const isIcon = /\.(png|svg|ico|jpg|jpeg|gif)$/i.test(cleanUrl);
+            
+            if (!fs.existsSync(target) && isIcon) {
+                const defaultIcon = join(__dirname, 'public', 'antigravity.png');
+                if (fs.existsSync(defaultIcon)) {
+                    // console.log(`[V4-GHOST] Fallback for: ${req.url}`);
+                    return res.sendFile(defaultIcon);
+                }
+            }
+            next();
+        }, express.static(assetsPath));
+        // Double Assets Fallback for Vite-generated relative paths (e.g. /assets/assets/...)
+        app.use('/assets/assets', (req, res, next) => {
+            res.header('Access-Control-Allow-Origin', '*');
+            next();
+        }, express.static(assetsPath));
+        console.log(`[V4] Serving project assets with ghost-icon fallback from: ${assetsPath}`);
     }
 
     app.use(compression());
@@ -77,6 +100,14 @@ async function createServer() {
         });
     });
 
+    // 🚩 404 Logger for Assets
+    app.use((req, res, next) => {
+        if (!res.headersSent) {
+            console.warn(`⚠️ [404-NOT-FOUND] ${req.method} ${req.url} from ${req.ip}`);
+        }
+        next();
+    });
+
     app.get('/', (req, res) => {
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
         res.setHeader('Pragma', 'no-cache');
@@ -91,11 +122,34 @@ async function createServer() {
         }
     }));
 
-    // Map VS Code resources (icons, etc.) to virtual endpoint
-    // The regex in automation.js replaces up to "Program Files", so the root here should be "Program Files"
-    const driveLetters = ['D', 'C', 'E'];
-    for (const drive of driveLetters) {
-        const p = `${drive}:/Program Files`;
+    const vscodeRoot = join(process.env.USERPROFILE || 'C:/Users/kuo_1', 'AppData/Local/Programs/Microsoft VS Code');
+    const userExtensions = join(process.env.USERPROFILE || 'C:/Users/kuo_1', '.vscode/extensions');
+    let vscodePaths = [
+        join(vscodeRoot, 'resources/app'), // Standard path
+        'C:/Program Files/Microsoft VS Code/resources/app',
+        'D:/Program Files/Microsoft VS Code/resources/app'
+    ];
+    // Add user extensions
+    if (fs.existsSync(userExtensions)) {
+        app.use('/vscode-resources/extensions', (req, res, next) => {
+            res.header('Access-Control-Allow-Origin', '*');
+            next();
+        }, express.static(userExtensions));
+        console.log(`[V4] Serving User extensions from: ${userExtensions}`);
+    }
+    // Add built-in extensions (standard app/extensions)
+    // Add hash folders to search (e.g. 61b3d0ab13/resources/app)
+    if (fs.existsSync(vscodeRoot)) {
+        try {
+            const subdirs = fs.readdirSync(vscodeRoot).filter(d => fs.lstatSync(join(vscodeRoot, d)).isDirectory());
+            subdirs.forEach(d => {
+                const target = join(vscodeRoot, d, 'resources/app');
+                if (fs.existsSync(target)) vscodePaths.unshift(target);
+            });
+        } catch (e) { console.error('[V4] VSCode subdir scan failed:', e.message); }
+    }
+
+    for (const p of vscodePaths) {
         if (fs.existsSync(p)) {
             app.use('/vscode-resources', (req, res, next) => {
                 res.header('Access-Control-Allow-Origin', '*');
@@ -126,13 +180,17 @@ async function createServer() {
                 if (!conn) return;
 
                 // 同時執行畫面抓取與狀態偵測，不再排隊
-                const [snapshot, newState] = await Promise.all([
+                const shouldAutoAccept = (tickCount % 2 === 0);
+                const [snapshot, newState, autoAcceptRes] = await Promise.all([
                     captureSnapshot(conn).catch(err => {
                         console.error(`[V4-LOOP] Snapshot error for Port ${port}:`, err.message);
                         return null;
                     }),
-                    syncAppState ? getAppState(conn).catch(() => null) : Promise.resolve(null)
+                    syncAppState ? getAppState(conn).catch(() => null) : Promise.resolve(null),
+                    shouldAutoAccept ? runAutoAccept(conn).catch(() => null) : Promise.resolve(null)
                 ]);
+
+
 
                 let appState = null;
                 if (syncAppState && newState) {

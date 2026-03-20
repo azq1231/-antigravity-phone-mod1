@@ -876,3 +876,34 @@ textarea::-webkit-scrollbar {
     padding: 2px 4px;
     position: relative !important;
 }
+
+/* --- Icon & Ghost-Image Fixes --- */
+#chatContent img {
+    max-width: 100%;
+    height: auto;
+}
+
+/* Specifically target file icons injected via assets route */
+#chatContent img[src*="/assets/"],
+#chatContent img[alt*="icon"],
+#chatContent img[alt="js"],
+#chatContent img[alt="py"],
+#chatContent img[alt="json"],
+#chatContent img[alt="antigravity.png"] {
+    width: 20px !important;
+    height: 20px !important;
+    display: inline-block !important;
+    vertical-align: middle !important;
+    margin-right: 4px !important;
+    margin-bottom: 2px !important;
+    border-radius: 4px !important;
+    object-fit: contain !important;
+}
+
+/* If the user uses the absolute /antigravity.png as a test */
+#chatContent img[src="/antigravity.png"] {
+    width: 24px !important;
+    height: 24px !important;
+    display: inline-block !important;
+    vertical-align: middle !important;
+}
