@@ -1,7 +1,9 @@
 # CHANGELOG
 
 ## 1.23.258 (2026-03-18)
+
 - 修正手機端圖標破圖 (Broken Icons) 錯誤。
+
 - 修正 Vite 資源路徑雙重疊加 (Double Assets) 問題。
 - 強化 VS Code AppData 路徑資源映射。
 - 確保所有靜態資源透過 `/assets` 與 `/vscode-resources` 正確提供。

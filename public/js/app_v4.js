@@ -108,6 +108,8 @@ let pendingImage = null;
 let currentDisplayTitle = `Port ${currentViewingPort}`;
 let cachedVLabel = 'V4.1';
 let uiLock = false; // 全域互動鎖，防止多重視窗衝突
+let isComposing = false; // IME 組字狀態鎖
+
 
 // Auth Helper
 async function fetchWithAuth(url, options = {}) {
@@ -212,8 +214,13 @@ function connectWebSocket() {
                         console.log('[App] Received AppState update:', data.appState);
                         updateUIState(data.appState);
                     }
+                    if (isComposing) {
+                         console.warn('[App] WS update ignored - user is composing text');
+                         return; // 正在選字或組字時，不應刷新 DOM 造成 UI 抖動
+                    }
                     renderSnapshot(data);
                 }
+
                 if (data.type === 'force_port_switch' || data.type === 'switched') {
                     const newPort = data.port || data.newPort;
                     currentViewingPort = newPort;
@@ -627,9 +634,35 @@ const openModeSelector = () => {
     };
 };
 
-// --- UI Binding & Start ---
+// --- IME 與鍵盤事件處理 ---
+messageInput.addEventListener('compositionstart', () => { 
+    isComposing = true; 
+    console.log('[App] IME Composition started'); 
+});
+messageInput.addEventListener('compositionend', () => { 
+    isComposing = false; 
+    console.log('[App] IME Composition ended'); 
+});
+
 if (sendBtn) sendBtn.onclick = () => sendMessage(0);
-messageInput.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(0); } };
+
+messageInput.onkeydown = (e) => { 
+    console.log(`[App] Keydown: ${e.key} (Composing: ${e.isComposing || isComposing})`);
+    
+    // 如果正在組字/選字，絕對不要攔截任何按鍵，讓瀏覽器/IME 自行處理
+    if (e.isComposing || isComposing) {
+        if (e.key === 'Enter') {
+            console.warn('[App] Enter key blocked during composition');
+        }
+        return; 
+    }
+
+    if (e.key === 'Enter' && !e.shiftKey) { 
+        e.preventDefault(); 
+        sendMessage(0); 
+    } 
+};
+
 refreshBtn.onclick = () => { location.reload(); };
 document.getElementById('scrollToBottom').onclick = () => { scrollToBottom(); forceScrollToBottom = true; };
 

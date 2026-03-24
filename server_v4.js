@@ -170,52 +170,72 @@ async function createServer() {
         const clients = Array.from(wss.clients).filter(c => c.readyState === WebSocket.OPEN);
         if (clients.length === 0) return;
 
-        // Group ports to avoid redundant scraping
-        const activePorts = [...new Set(clients.map(c => c.viewingPort || 9000))];
+        // 1. 每 5 次 Tick 清空 CDP 快照，重新掃描所有可能的 Ports (9000-9003, 9222)
+        const forceRescan = (tickCount % 5 === 0);
+        const instances = await findAllInstances();
+        const allPorts = instances.map(i => i.port);
+
+        // 2. 獲取當前客戶端正在看的 Ports
+        const viewingPorts = [ ...new Set(clients.map(c => c.viewingPort || 9000)) ];
         const portCache = new Map();
 
-        await Promise.all(activePorts.map(async (port) => {
+        // 3. 遍歷「所有」發現的執行實例 (Ports)
+        await Promise.all(allPorts.map(async (port) => {
             try {
-                const conn = await getOrConnectParams(port).catch(() => null);
+                // 如果是 viewedPort，或者是強制重整週期間，獲取連線列表
+                const conn = await getOrConnectParams(port, forceRescan).catch(() => null);
                 if (!conn) return;
 
-                // 同時執行畫面抓取與狀態偵測，不再排隊
-                const shouldAutoAccept = (tickCount % 2 === 0);
-                const [snapshot, newState, autoAcceptRes] = await Promise.all([
-                    captureSnapshot(conn).catch(err => {
-                        console.error(`[V4-LOOP] Snapshot error for Port ${port}:`, err.message);
-                        return null;
-                    }),
-                    syncAppState ? getAppState(conn).catch(() => null) : Promise.resolve(null),
-                    shouldAutoAccept ? runAutoAccept(conn).catch(() => null) : Promise.resolve(null)
-                ]);
+                const isViewed = viewingPorts.includes(port);
+                const shouldAutoAccept = (tickCount % 5 === 0); // 頻率 5s 一次
 
+                // 下列動作同步啟動：畫面快照與狀態只針對「正被觀看中」的視窗
+                const tasks = [
+                    shouldAutoAccept ? runAutoAccept(conn).then(res => {
+                        if (res && res.success) {
+                            console.log(`🚀 [V4-AUTO] GOBAL CLICK TRIGGERED in Port ${port}: Clicked "${res.label}" (${res.count} items)`);
+                        }
+                        return res;
+                    }).catch(() => null) : Promise.resolve(null)
+                ];
 
-
-                let appState = null;
-                if (syncAppState && newState) {
-                    newState.version = APP_VERSION;
-                    const oldState = lastAppStateMap.get(port) || { mode: 'Unknown', model: 'Unknown', usage: '', title: '' };
-                    let parsedUsage = (newState.usageText || newState.usage || (newState.model !== 'Unknown' ? newState.model : oldState.model));
-                    if (parsedUsage && parsedUsage.length > 100) {
-                        parsedUsage = parsedUsage.substring(0, 100) + '...';
-                    }
-
-
-                    const mergedState = {
-                        mode: (newState.mode !== 'Unknown') ? newState.mode : oldState.mode,
-                        model: (newState.model !== 'Unknown') ? newState.model : oldState.model,
-                        usage: parsedUsage,
-                        title: (newState.title !== '' && newState.title !== 'Unknown') ? newState.title : oldState.title,
-                        version: newState.version
-                    };
-                    lastAppStateMap.set(port, mergedState);
-                    appState = mergedState;
-                } else if (syncAppState && lastAppStateMap.has(port)) {
-                    appState = lastAppStateMap.get(port);
+                if (isViewed) {
+                    tasks.push(
+                        captureSnapshot(conn).catch(err => {
+                            console.error(`[V4-LOOP] Snapshot error for Port ${port}:`, err.message);
+                            return null;
+                        }),
+                        syncAppState ? getAppState(conn).catch(() => null) : Promise.resolve(null)
+                    );
                 }
 
-                portCache.set(port, { snapshot, appState });
+                const [autoAcceptRes, snapshot, newState] = await Promise.all(tasks);
+
+                if (isViewed) {
+                    let appState = null;
+                    if (syncAppState && newState) {
+                        newState.version = APP_VERSION;
+                        const oldState = lastAppStateMap.get(port) || { mode: 'Unknown', model: 'Unknown', usage: '', title: '' };
+                        let parsedUsage = (newState.usageText || newState.usage || (newState.model !== 'Unknown' ? newState.model : oldState.model));
+                        if (parsedUsage && parsedUsage.length > 100) {
+                            parsedUsage = parsedUsage.substring(0, 100) + '...';
+                        }
+
+                        const mergedState = {
+                            mode: (newState.mode !== 'Unknown') ? newState.mode : oldState.mode,
+                            model: (newState.model !== 'Unknown') ? newState.model : oldState.model,
+                            usage: parsedUsage,
+                            title: (newState.title !== '' && newState.title !== 'Unknown') ? newState.title : oldState.title,
+                            version: newState.version
+                        };
+                        lastAppStateMap.set(port, mergedState);
+                        appState = mergedState;
+                    } else if (syncAppState && lastAppStateMap.has(port)) {
+                        appState = lastAppStateMap.get(port);
+                    }
+
+                    portCache.set(port, { snapshot, appState });
+                }
             } catch (e) {
                 console.error(`[V4-LOOP] Port ${port} processing error:`, e.message);
             }
